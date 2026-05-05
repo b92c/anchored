@@ -83,7 +83,7 @@ func getToolMCPPath(t string) string {
 	home, _ := os.UserHomeDir()
 	switch t {
 	case "claude-code":
-		return filepath.Join(home, ".claude", "mcp.json")
+		return filepath.Join(home, ".claude.json")
 	case "cursor":
 		return filepath.Join(home, ".cursor", "mcp.json")
 	case "opencode":
@@ -155,6 +155,10 @@ func registerMCP(t string) error {
 	out, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
+	}
+
+	if _, err := os.Stat(configPath); err == nil {
+		_ = os.WriteFile(configPath+".bak", data, 0644)
 	}
 
 	if err := os.WriteFile(configPath, append(out, '\n'), 0644); err != nil {

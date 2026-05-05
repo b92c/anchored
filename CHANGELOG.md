@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.2] - 2026-05-05
+
+### Fixed
+
+- **Claude Code MCP registration** — `anchored init --tool claude-code` now writes to `~/.claude.json` (the actual file Claude Code reads) instead of the non-existent `~/.claude/mcp.json`. Anchored was silently invisible to Claude Code while working in OpenCode/Cursor.
+- **Backup before merge** — `registerMCP` now writes a `.bak` copy before overwriting any existing tool config, protecting user state (e.g., the 200KB+ payload Claude Code keeps in `~/.claude.json`).
+
+### Docs
+
+- README setup section corrected: shows `claude mcp add anchored anchored` as the canonical Claude Code install path and clarifies the actual config-file locations for each tool.
+
 ## [0.2.0] - 2025-04-30
 
 ### Added

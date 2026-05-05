@@ -44,9 +44,16 @@ First run auto-downloads the embedding model (~470MB) and creates `~/.anchored/`
 
 ## Setup
 
-Add Anchored as an MCP server to your tool:
+Run `anchored init` to auto-register Anchored with every detected tool. Or configure manually:
 
-**Claude Code** (`.claude/settings.json`):
+**Claude Code** (recommended):
+```bash
+claude mcp add anchored anchored
+```
+
+This writes the entry to `~/.claude.json` (Claude Code's MCP config — it's `~/.claude.json`, not `~/.claude/mcp.json`).
+
+**Cursor** (`~/.cursor/mcp.json`) and **OpenCode** (`~/.config/opencode/opencode.json`):
 ```json
 {
   "mcpServers": {
@@ -56,8 +63,6 @@ Add Anchored as an MCP server to your tool:
   }
 }
 ```
-
-**Cursor** / **OpenCode** — add the same MCP config in your tool's settings.
 
 ## CLI
 
