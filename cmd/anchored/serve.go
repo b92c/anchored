@@ -15,6 +15,7 @@ import (
 	"github.com/jholhewres/anchored/pkg/memory"
 	"github.com/jholhewres/anchored/pkg/mcp"
 	"github.com/jholhewres/anchored/pkg/session"
+	"github.com/jholhewres/anchored/pkg/updater"
 )
 
 func runServe() {
@@ -51,6 +52,11 @@ func runServe() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	go updater.Run(ctx, updater.Options{
+		CurrentVersion: Version,
+		Logger:         logger,
+	})
 
 	if err := serveSTDIO(ctx, memSvc, cfg, logger); err != nil {
 		slog.Error("serve error", "error", err)

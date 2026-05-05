@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.3] - 2026-05-05
+
+### Added
+
+- **Auto-updater** — `anchored serve` now checks GitHub releases on startup, downloads the matching tarball if a newer version is available, and atomically replaces `~/.anchored/bin/anchored`. The check runs in a background goroutine and never blocks the MCP handshake. Only triggers for binaries living under the canonical install dir, so dev builds are never overwritten. Disable via `ANCHORED_NO_AUTOUPDATE=1`. The currently running process keeps its in-memory image; the new binary activates on the next MCP spawn.
+
 ## [0.3.2] - 2026-05-05
 
 ### Fixed
