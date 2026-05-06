@@ -78,7 +78,30 @@ func (c *ctxOptimizer) FetchAndIndex(ctx context.Context, url string, source str
 	return r.Markdown, r.FetchedAt.Format(time.RFC3339), r.FromCache, nil
 }
 
-func (c *ctxOptimizer) ExecuteBatch(ctx context.Context, commands []OptimizerBatchCommand, queries []string, intent string, projectID string) (*OptimizerBatchResult, error) {
+func (c *ctxOptimizer) FetchAndIndexBatch(ctx context.Context, requests []OptimizerFetchRequest, concurrency int, projectID string, force bool) ([]OptimizerFetchBatchEntry, error) {
+	reqs := make([]ctxpkg.FetchRequest, len(requests))
+	for i, r := range requests {
+		reqs[i] = ctxpkg.FetchRequest{URL: r.URL, Source: r.Source}
+	}
+	r, err := c.inner.FetchAndIndexBatch(ctx, reqs, concurrency, projectID, force)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]OptimizerFetchBatchEntry, len(r.Entries))
+	for i, e := range r.Entries {
+		out[i] = OptimizerFetchBatchEntry{
+			URL:       e.URL,
+			Source:    e.Source,
+			Bytes:     e.Bytes,
+			FetchedAt: e.FetchedAt,
+			FromCache: e.FromCache,
+			Error:     e.Error,
+		}
+	}
+	return out, nil
+}
+
+func (c *ctxOptimizer) ExecuteBatch(ctx context.Context, commands []OptimizerBatchCommand, queries []string, intent string, projectID string, concurrency int) (*OptimizerBatchResult, error) {
 	batchCmds := make([]ctxpkg.BatchCommand, len(commands))
 	for i, c := range commands {
 		batchCmds[i] = ctxpkg.BatchCommand{
@@ -87,7 +110,7 @@ func (c *ctxOptimizer) ExecuteBatch(ctx context.Context, commands []OptimizerBat
 			Language: c.Language,
 		}
 	}
-	r, err := c.inner.ExecuteBatch(ctx, batchCmds, queries, intent, projectID)
+	r, err := c.inner.ExecuteBatch(ctx, batchCmds, queries, intent, projectID, concurrency)
 	if err != nil {
 		return nil, err
 	}

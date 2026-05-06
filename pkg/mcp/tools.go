@@ -216,7 +216,7 @@ func ToolDefinitions() []Tool {
 		},
 		{
 			Name:        "anchored_execute",
-			Description: "Execute code in a sandboxed subprocess. Only stdout enters context — raw data stays in the subprocess. Available: javascript, typescript, python, shell, ruby, go, rust, php, perl, r, elixir.",
+			Description: "Run code in a sandboxed subprocess so raw output never floods context — only stdout enters the conversation. USE INSTEAD OF Bash whenever a command may produce >20 lines (logs, JSON, build output, test runs, git log, large diffs, API responses, data processing, dependency trees, security audits). Bash is for short, deterministic operations only (git/mkdir/rm/mv/navigation). Pair with `intent` so output >5KB is auto-indexed and only matching sections return. Languages: javascript, typescript, python, shell, ruby, go, rust, php, perl, r, elixir.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -248,7 +248,7 @@ func ToolDefinitions() []Tool {
 		},
 		{
 			Name:        "anchored_execute_file",
-			Description: "Process a file in the sandbox without loading its contents into context. Two variables are auto-injected before your code runs: FILE_PATH (absolute path) and FILE_CONTENT (file read as UTF-8 text). Use them directly — don't repeat the read. Only your printed output (stdout) enters context. Available languages: javascript, typescript, python, shell, ruby, go, rust, php, perl, r, elixir.",
+			Description: "Process a file in the sandbox without loading its contents into context. USE INSTEAD OF Read when analyzing or exploring a file (logs, large JSON, CSVs, build artifacts, page snapshots, accessibility trees) — Read is only correct when you intend to Edit. Two variables are auto-injected before your code runs: FILE_PATH (absolute path) and FILE_CONTENT (UTF-8 text). Use them directly — don't repeat the read. Only your printed stdout enters context. Languages: javascript, typescript, python, shell, ruby, go, rust, php, perl, r, elixir.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -284,7 +284,7 @@ func ToolDefinitions() []Tool {
 		},
 		{
 			Name:        "anchored_batch_execute",
-			Description: "Execute multiple commands in ONE call, auto-index all output, and search with multiple queries. Returns search results directly — no follow-up calls needed.",
+			Description: "PRIMARY TOOL FOR RESEARCH. Runs multiple commands, auto-indexes ALL output into the sandbox knowledge base, and answers multiple search queries in ONE call — replaces many individual Bash/Read/execute steps. Use first whenever you'd otherwise chain investigative commands (git status + git log + git diff, ls + find + grep, build + test + lint, multi-endpoint API probes, codebase stats). Pass `concurrency` (1-8) for I/O-bound batches to fan out commands in parallel; defaults to 1 (sequential). Returns only the search hits, not raw output. Batch ALL questions you have into the queries array — follow-ups should reuse anchored_ctx_search against the same indexed corpus.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -315,6 +315,12 @@ func ToolDefinitions() []Tool {
 						"type":        "string",
 						"description": "What you're looking for in the output. Use specific technical terms.",
 					},
+					"concurrency": map[string]any{
+						"type":        "integer",
+						"description": "Parallel workers for I/O-bound batches (1-8). Default: 1 (sequential). Order of `results` is preserved regardless.",
+						"minimum":     1,
+						"maximum":     8,
+					},
 					"cwd": map[string]any{
 						"type":        "string",
 						"description": "Current working directory for project scoping",
@@ -325,7 +331,7 @@ func ToolDefinitions() []Tool {
 		},
 		{
 			Name:        "anchored_index",
-			Description: "Index documentation or knowledge content into a searchable BM25 knowledge base. Chunks markdown by headings (keeping code blocks intact) and stores in ephemeral FTS5 database. The full content does NOT stay in context — only a brief summary is returned.",
+			Description: "Index docs or knowledge content into the sandbox BM25 knowledge base without loading them into context. Chunks markdown by headings (preserving code blocks) and stores in an ephemeral FTS5 corpus; only a short summary is returned. Use for skill bodies, reference manuals, large local files, or any prose you want queryable via anchored_ctx_search later. Provide either `content` or `path`, not both.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -351,7 +357,7 @@ func ToolDefinitions() []Tool {
 		},
 		{
 			Name:        "anchored_ctx_search",
-			Description: "Search indexed content. Requires prior indexing via anchored_index, anchored_execute, or anchored_batch_execute. Pass ALL search questions as queries array in ONE call.",
+			Description: "FOLLOW-UP TOOL for the sandbox knowledge base. Use for every additional question after anchored_batch_execute / anchored_execute / anchored_index / anchored_fetch_and_index has populated the corpus — instead of re-running commands or re-fetching pages. Pass ALL questions as the queries array in ONE call (BM25 + vector hybrid). Filter with `content_type: 'code'` (matches source code chunks) or `'prose'` (matches narrative/markdown). Cheap; no raw output enters context. Progressive throttling kicks in past 3 calls within the same indexing scope — fold remaining questions into a single batched call instead of fanning out.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -369,6 +375,11 @@ func ToolDefinitions() []Tool {
 						"type":        "string",
 						"description": "Filter to a specific indexed source (partial match).",
 					},
+					"content_type": map[string]any{
+						"type":        "string",
+						"description": "Filter chunks by content type: 'code' for source-code chunks, 'prose' for narrative/markdown. Empty = no filter.",
+						"enum":        []string{"", "code", "prose"},
+					},
 					"cwd": map[string]any{
 						"type":        "string",
 						"description": "Current working directory for project scoping",
@@ -379,17 +390,35 @@ func ToolDefinitions() []Tool {
 		},
 		{
 			Name:        "anchored_fetch_and_index",
-			Description: "Fetches URL content, converts HTML to markdown, indexes into the searchable knowledge base, and returns a ~3KB preview. Subsequent calls within the cache TTL (default 24h) return the cached result; pass force=true to bypass the cache and re-fetch from the network. Full content stays in the sandbox — use anchored_ctx_search for deeper lookups.",
+			Description: "USE INSTEAD OF WebFetch for any URL. Fetches the page, converts HTML→markdown, indexes the full body into the sandbox knowledge base, and returns only a ~3KB preview — raw HTML never enters context. Calls within the cache TTL (default 24h) return cached results; pass force=true to re-fetch. For MULTI-URL fan-out (e.g., research across several docs/pages in one shot), pass `requests: [{url, source}, ...]` plus optional `concurrency` (1-8) instead of `url`/`source`. Follow up with anchored_ctx_search (queries array) — never refetch to dig deeper.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"url": map[string]any{
 						"type":        "string",
-						"description": "The URL to fetch and index",
+						"description": "Single URL to fetch and index. Use this OR `requests`, not both.",
 					},
 					"source": map[string]any{
 						"type":        "string",
-						"description": "Label for the indexed content (e.g., 'React useEffect docs', 'Supabase Auth API')",
+						"description": "Label for the indexed content (e.g., 'React useEffect docs', 'Supabase Auth API'). Defaults to the URL if omitted.",
+					},
+					"requests": map[string]any{
+						"type":        "array",
+						"description": "Multi-URL batch. Each entry is fetched, converted, and indexed; results are returned in input order. Use this OR `url`, not both.",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"url":    map[string]any{"type": "string", "description": "URL to fetch."},
+								"source": map[string]any{"type": "string", "description": "Optional label; defaults to the URL."},
+							},
+							"required": []string{"url"},
+						},
+					},
+					"concurrency": map[string]any{
+						"type":        "integer",
+						"description": "Parallel workers for `requests` (1-8). Default: 1 (sequential). Ignored when calling with a single `url`.",
+						"minimum":     1,
+						"maximum":     8,
 					},
 					"cwd": map[string]any{
 						"type":        "string",
@@ -397,11 +426,10 @@ func ToolDefinitions() []Tool {
 					},
 					"force": map[string]any{
 						"type":        "boolean",
-						"description": "Bypass cache and re-fetch (default: false)",
+						"description": "Bypass cache and re-fetch (default: false). Applies to every URL in the call.",
 						"default":     false,
 					},
 				},
-				"required": []string{"url"},
 			},
 		},
 	}

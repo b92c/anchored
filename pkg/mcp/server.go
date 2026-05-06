@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 
 	"github.com/jholhewres/anchored/pkg/kg"
 	"github.com/jholhewres/anchored/pkg/memory"
@@ -21,8 +22,25 @@ type OptimizerFacade interface {
 	IndexRaw(ctx context.Context, content string, source string, label string, projectID string) (string, error)
 	Search(ctx context.Context, query string, maxResults int, contentType string, source string, projectID string) ([]OptimizerSearchResult, error)
 	FetchAndIndex(ctx context.Context, url string, source string, projectID string, force bool) (markdown string, fetchedAt string, fromCache bool, err error)
-	ExecuteBatch(ctx context.Context, commands []OptimizerBatchCommand, queries []string, intent string, projectID string) (*OptimizerBatchResult, error)
+	FetchAndIndexBatch(ctx context.Context, requests []OptimizerFetchRequest, concurrency int, projectID string, force bool) ([]OptimizerFetchBatchEntry, error)
+	ExecuteBatch(ctx context.Context, commands []OptimizerBatchCommand, queries []string, intent string, projectID string, concurrency int) (*OptimizerBatchResult, error)
 	Close()
+}
+
+// OptimizerFetchRequest is a platform-independent fetch request for batch URL fetches.
+type OptimizerFetchRequest struct {
+	URL    string
+	Source string
+}
+
+// OptimizerFetchBatchEntry is a platform-independent per-URL outcome.
+type OptimizerFetchBatchEntry struct {
+	URL       string
+	Source    string
+	Bytes     int
+	FetchedAt string
+	FromCache bool
+	Error     string
 }
 
 // OptimizerSearchResult is a platform-independent search result.
@@ -66,7 +84,23 @@ type Server struct {
 	optimizer OptimizerFacade
 	logger   *slog.Logger
 	version  string
+
+	// searchCalls counts anchored_ctx_search invocations within the current
+	// indexing scope. Reset by anchored_batch_execute, anchored_index, and
+	// anchored_fetch_and_index. Drives progressive throttling:
+	//   1-3: normal results
+	//   4-8: limit=1 with a warning appended
+	//   9+:  blocked, redirected to anchored_batch_execute
+	searchCalls atomic.Int32
 }
+
+// resetSearchThrottle is called whenever a tool repopulates / extends the
+// indexed corpus, so a fresh round of follow-up searches starts at zero.
+func (s *Server) resetSearchThrottle() { s.searchCalls.Store(0) }
+
+// nextSearchCall returns the 1-based count for the current call and the
+// throttling decision derived from it.
+func (s *Server) nextSearchCall() int32 { return s.searchCalls.Add(1) }
 
 func NewServer(mem *memory.Service, kg *kg.KG, sessions *session.Manager, optimizer OptimizerFacade, version string, logger *slog.Logger) *Server {
 	if logger == nil {
@@ -581,10 +615,11 @@ func (s *Server) toolCtxBatchExecute(ctx context.Context, args json.RawMessage) 
 			Command  string `json:"command"`
 			Language string `json:"language"`
 		} `json:"commands"`
-		Queries []string `json:"queries"`
-		Timeout int      `json:"timeout"`
-		Intent  string   `json:"intent"`
-		CWD     string   `json:"cwd"`
+		Queries     []string `json:"queries"`
+		Timeout     int      `json:"timeout"`
+		Intent      string   `json:"intent"`
+		Concurrency int      `json:"concurrency"`
+		CWD         string   `json:"cwd"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("parse args: %w", err)
@@ -606,7 +641,8 @@ func (s *Server) toolCtxBatchExecute(ctx context.Context, args json.RawMessage) 
 			Language: c.Language,
 		}
 	}
-	result, err := s.optimizer.ExecuteBatch(ctx, cmds, p.Queries, p.Intent, projectID)
+	s.resetSearchThrottle()
+	result, err := s.optimizer.ExecuteBatch(ctx, cmds, p.Queries, p.Intent, projectID, p.Concurrency)
 	if err != nil {
 		return "", err
 	}
@@ -650,6 +686,7 @@ func (s *Server) toolCtxIndex(ctx context.Context, args json.RawMessage) (string
 		if err != nil {
 			return "", err
 		}
+		s.resetSearchThrottle()
 		return fmt.Sprintf("Indexed content from '%s' (id: %s)", p.Source, id), nil
 	}
 	if p.Path != "" {
@@ -661,6 +698,7 @@ func (s *Server) toolCtxIndex(ctx context.Context, args json.RawMessage) (string
 		if err != nil {
 			return "", err
 		}
+		s.resetSearchThrottle()
 		return fmt.Sprintf("Indexed file '%s' as '%s' (id: %s)", p.Path, p.Source, id), nil
 	}
 	return "", fmt.Errorf("provide either 'content' or 'path'")
@@ -671,16 +709,34 @@ func (s *Server) toolCtxSearch(ctx context.Context, args json.RawMessage) (strin
 		return "Context optimizer not enabled. Set context_optimizer.enabled: true in config.", nil
 	}
 	var p struct {
-		Queries []string `json:"queries"`
-		Limit   int      `json:"limit"`
-		Source  string   `json:"source"`
-		CWD     string   `json:"cwd"`
+		Queries     []string `json:"queries"`
+		Limit       int      `json:"limit"`
+		Source      string   `json:"source"`
+		ContentType string   `json:"content_type"`
+		CWD         string   `json:"cwd"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("parse args: %w", err)
 	}
 	if p.Limit == 0 {
 		p.Limit = 3
+	}
+	if p.ContentType != "" && p.ContentType != "code" && p.ContentType != "prose" {
+		return "", fmt.Errorf("content_type must be 'code', 'prose', or empty (got %q)", p.ContentType)
+	}
+
+	// Progressive throttling — encourages folding follow-ups into the next
+	// anchored_batch_execute / anchored_fetch_and_index call instead of fanning
+	// out one query per round-trip.
+	call := s.nextSearchCall()
+	if call >= 9 {
+		return "anchored_ctx_search throttled: 9+ consecutive calls without re-indexing. Fold remaining questions into the queries array of anchored_batch_execute (or anchored_fetch_and_index) so output is captured and searched in one round-trip.", nil
+	}
+	limit := p.Limit
+	throttleNote := ""
+	if call >= 4 {
+		limit = 1
+		throttleNote = fmt.Sprintf("\n\n[throttle] call #%d — results reduced to 1/query. Batch follow-ups via anchored_batch_execute(queries=[...]).", call)
 	}
 
 	var projectID string
@@ -691,7 +747,7 @@ func (s *Server) toolCtxSearch(ctx context.Context, args json.RawMessage) (strin
 	seen := make(map[string]bool)
 	var lines []string
 	for _, q := range p.Queries {
-		hits, err := s.optimizer.Search(ctx, q, p.Limit, "", p.Source, projectID)
+		hits, err := s.optimizer.Search(ctx, q, limit, p.ContentType, p.Source, projectID)
 		if err != nil {
 			lines = append(lines, fmt.Sprintf("Query '%s': error — %v", q, err))
 			continue
@@ -709,9 +765,9 @@ func (s *Server) toolCtxSearch(ctx context.Context, args json.RawMessage) (strin
 		}
 	}
 	if len(lines) == 0 {
-		return "No results found for any query.", nil
+		return "No results found for any query." + throttleNote, nil
 	}
-	return joinLines(lines), nil
+	return joinLines(lines) + throttleNote, nil
 }
 
 func (s *Server) toolCtxFetchAndIndex(ctx context.Context, args json.RawMessage) (string, error) {
@@ -719,16 +775,24 @@ func (s *Server) toolCtxFetchAndIndex(ctx context.Context, args json.RawMessage)
 		return "Context optimizer not enabled. Set context_optimizer.enabled: true in config.", nil
 	}
 	var p struct {
-		URL    string `json:"url"`
-		Source string `json:"source"`
-		CWD    string `json:"cwd"`
-		Force  bool   `json:"force"`
+		URL         string `json:"url"`
+		Source      string `json:"source"`
+		Requests    []struct {
+			URL    string `json:"url"`
+			Source string `json:"source"`
+		} `json:"requests"`
+		Concurrency int    `json:"concurrency"`
+		CWD         string `json:"cwd"`
+		Force       bool   `json:"force"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("parse args: %w", err)
 	}
-	if p.Source == "" {
-		p.Source = p.URL
+	if p.URL == "" && len(p.Requests) == 0 {
+		return "", fmt.Errorf("provide either 'url' or 'requests'")
+	}
+	if p.URL != "" && len(p.Requests) > 0 {
+		return "", fmt.Errorf("provide either 'url' or 'requests', not both")
 	}
 
 	var projectID string
@@ -736,7 +800,43 @@ func (s *Server) toolCtxFetchAndIndex(ctx context.Context, args json.RawMessage)
 		projectID = s.mem.ResolveProject(p.CWD)
 	}
 
-	markdown, fetchedAt, fromCache, err := s.optimizer.FetchAndIndex(ctx, p.URL, p.Source, projectID, p.Force)
+	s.resetSearchThrottle()
+
+	if len(p.Requests) > 0 {
+		reqs := make([]OptimizerFetchRequest, len(p.Requests))
+		for i, r := range p.Requests {
+			reqs[i] = OptimizerFetchRequest{URL: r.URL, Source: r.Source}
+		}
+		entries, err := s.optimizer.FetchAndIndexBatch(ctx, reqs, p.Concurrency, projectID, p.Force)
+		if err != nil {
+			return "", err
+		}
+		var ok, failed, cached, totalBytes int
+		var lines []string
+		for i, e := range entries {
+			if e.Error != "" {
+				failed++
+				lines = append(lines, fmt.Sprintf("%d. [%s] FAILED — %s", i+1, e.URL, e.Error))
+				continue
+			}
+			ok++
+			totalBytes += e.Bytes
+			cacheStatus := ""
+			if e.FromCache {
+				cached++
+				cacheStatus = " (from cache)"
+			}
+			lines = append(lines, fmt.Sprintf("%d. [%s] %s%s — %d bytes at %s", i+1, e.Source, e.URL, cacheStatus, e.Bytes, e.FetchedAt))
+		}
+		header := fmt.Sprintf("Fetched %d URL(s): %d ok (%d cached), %d failed. Indexed %d bytes total.\nUse anchored_ctx_search to query the corpus.", len(entries), ok, cached, failed, totalBytes)
+		return header + "\n\n" + joinLines(lines), nil
+	}
+
+	source := p.Source
+	if source == "" {
+		source = p.URL
+	}
+	markdown, fetchedAt, fromCache, err := s.optimizer.FetchAndIndex(ctx, p.URL, source, projectID, p.Force)
 	if err != nil {
 		return "", err
 	}
@@ -748,7 +848,7 @@ func (s *Server) toolCtxFetchAndIndex(ctx context.Context, args json.RawMessage)
 	if fromCache {
 		cacheStatus = " (from cache)"
 	}
-	return fmt.Sprintf("Fetched and indexed '%s'%s at %s (%d bytes).\n\n%s\n\nUse anchored_ctx_search to find specific sections.", p.Source, cacheStatus, fetchedAt, len(markdown), preview), nil
+	return fmt.Sprintf("Fetched and indexed '%s'%s at %s (%d bytes).\n\n%s\n\nUse anchored_ctx_search to find specific sections.", source, cacheStatus, fetchedAt, len(markdown), preview), nil
 }
 
 func (s *Server) handleResourcesList(id json.RawMessage) []byte {

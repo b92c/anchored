@@ -53,6 +53,24 @@ type FetchResult struct {
 	FromCache   bool      `json:"from_cache"`
 }
 
+type FetchRequest struct {
+	URL    string `json:"url"`
+	Source string `json:"source,omitempty"`
+}
+
+type FetchBatchEntry struct {
+	URL       string `json:"url"`
+	Source    string `json:"source"`
+	Bytes     int    `json:"bytes"`
+	FetchedAt string `json:"fetched_at"`
+	FromCache bool   `json:"from_cache"`
+	Error     string `json:"error,omitempty"`
+}
+
+type FetchBatchResult struct {
+	Entries []FetchBatchEntry `json:"entries"`
+}
+
 type SessionEvent struct {
 	ID        string    `json:"id"`
 	SessionID string    `json:"session_id"`

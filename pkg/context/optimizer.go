@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/jholhewres/anchored/pkg/config"
@@ -170,10 +171,75 @@ func (o *Optimizer) FetchAndIndex(ctx context.Context, url string, source string
 	return result, nil
 }
 
-// ExecuteBatch runs multiple commands sequentially, indexes output, and
-// optionally searches the indexed content.
-func (o *Optimizer) ExecuteBatch(ctx context.Context, commands []BatchCommand, queries []string, intent string, projectID string) (*BatchResult, error) {
-	return o.batch.ExecuteBatch(ctx, commands, queries, "", intent, projectID)
+// FetchAndIndexBatch fetches multiple URLs, converts each to markdown, and
+// indexes them. concurrency=1 runs sequentially; concurrency>1 fans out across
+// up to maxBatchConcurrency workers. Per-URL failures are reported in the
+// returned entries (Error field) rather than aborting the batch.
+func (o *Optimizer) FetchAndIndexBatch(ctx context.Context, requests []FetchRequest, concurrency int, projectID string, force bool) (*FetchBatchResult, error) {
+	if len(requests) == 0 {
+		return &FetchBatchResult{Entries: []FetchBatchEntry{}}, nil
+	}
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	if concurrency > maxBatchConcurrency {
+		concurrency = maxBatchConcurrency
+	}
+
+	entries := make([]FetchBatchEntry, len(requests))
+	run := func(idx int, req FetchRequest) {
+		source := req.Source
+		if source == "" {
+			source = req.URL
+		}
+		entry := FetchBatchEntry{URL: req.URL, Source: source}
+		if force {
+			o.fetcher.Invalidate(req.URL)
+		}
+		result, err := o.fetcher.FetchAndConvert(ctx, req.URL)
+		if err != nil {
+			entry.Error = err.Error()
+			entries[idx] = entry
+			return
+		}
+		if _, ierr := o.indexer.IndexContent(ctx, result.Markdown, source, req.URL, "", "prose", projectID); ierr != nil {
+			entry.Error = fmt.Errorf("index: %w", ierr).Error()
+			entries[idx] = entry
+			return
+		}
+		entry.Bytes = len(result.Markdown)
+		entry.FetchedAt = result.FetchedAt.Format(time.RFC3339)
+		entry.FromCache = result.FromCache
+		entries[idx] = entry
+	}
+
+	if concurrency == 1 {
+		for i, r := range requests {
+			run(i, r)
+		}
+	} else {
+		sem := make(chan struct{}, concurrency)
+		var wg sync.WaitGroup
+		for i, r := range requests {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(idx int, req FetchRequest) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				run(idx, req)
+			}(i, r)
+		}
+		wg.Wait()
+	}
+
+	return &FetchBatchResult{Entries: entries}, nil
+}
+
+// ExecuteBatch runs multiple commands and optionally searches indexed output.
+// concurrency=1 (default) runs sequentially; concurrency>1 fans out across up
+// to maxBatchConcurrency workers. Order of `Results` is preserved.
+func (o *Optimizer) ExecuteBatch(ctx context.Context, commands []BatchCommand, queries []string, intent string, projectID string, concurrency int) (*BatchResult, error) {
+	return o.batch.ExecuteBatch(ctx, commands, queries, "", intent, projectID, concurrency)
 }
 
 // Store exposes the underlying Store for session event operations.

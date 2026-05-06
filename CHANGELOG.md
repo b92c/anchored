@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.1] - 2026-05-05
+
+### Added
+
+- **`anchored_fetch_and_index` multi-URL batch** — accepts `requests: [{url, source}, ...]` plus optional `concurrency: 1-8` to fan out HTML→markdown→index across several URLs in one call. Per-URL failures are reported in the response (no abort). Single-URL `url`/`source` form is preserved.
+- **`anchored_batch_execute` parallel commands** — optional `concurrency: 1-8` runs sandbox commands in parallel for I/O-bound batches. Result order matches input order regardless of concurrency. Defaults to sequential.
+- **`anchored_ctx_search` content-type filter** — optional `content_type: 'code' | 'prose'` narrows hits to source-code chunks or prose chunks. Empty (default) preserves prior behavior.
+- **`anchored_ctx_search` progressive throttling** — calls 1-3 return normal `limit`, 4-8 are clamped to 1 result/query with a "fold into batch" warning, 9+ are blocked and redirect to `anchored_batch_execute`. Counter resets whenever `anchored_batch_execute`, `anchored_fetch_and_index`, or `anchored_index` repopulates the corpus.
+
+### Changed
+
+- **Sandbox tool descriptions sharpened for routing** — `anchored_execute`, `anchored_execute_file`, `anchored_batch_execute`, `anchored_ctx_search`, `anchored_fetch_and_index`, and `anchored_index` now lead with explicit "USE INSTEAD OF Bash/Read/WebFetch" guidance and position `anchored_batch_execute` as the primary research tool / `anchored_ctx_search` as the follow-up tool, so models pick the sandbox path even when no external routing hooks are present.
+
 ## [0.4.0] - 2026-05-05
 
 ### Added

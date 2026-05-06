@@ -129,7 +129,7 @@ func TestOptimizer_BatchExecute(t *testing.T) {
 	}
 	queries := []string{"batch hello"}
 
-	result, err := o.ExecuteBatch(ctx, commands, queries, "batch", "")
+	result, err := o.ExecuteBatch(ctx, commands, queries, "batch", "", 0)
 	if err != nil {
 		t.Fatalf("execute batch: %v", err)
 	}

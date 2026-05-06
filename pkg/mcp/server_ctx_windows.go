@@ -41,7 +41,11 @@ func (n *noopOptimizer) FetchAndIndex(ctx context.Context, url string, source st
 	return "", "", false, fmt.Errorf("not supported on windows")
 }
 
-func (n *noopOptimizer) ExecuteBatch(ctx context.Context, commands []OptimizerBatchCommand, queries []string, intent string, projectID string) (*OptimizerBatchResult, error) {
+func (n *noopOptimizer) FetchAndIndexBatch(ctx context.Context, requests []OptimizerFetchRequest, concurrency int, projectID string, force bool) ([]OptimizerFetchBatchEntry, error) {
+	return nil, fmt.Errorf("not supported on windows")
+}
+
+func (n *noopOptimizer) ExecuteBatch(ctx context.Context, commands []OptimizerBatchCommand, queries []string, intent string, projectID string, concurrency int) (*OptimizerBatchResult, error) {
 	return nil, fmt.Errorf("not supported on windows")
 }
 
