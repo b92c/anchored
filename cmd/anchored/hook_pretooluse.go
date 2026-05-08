@@ -7,16 +7,22 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+
+	"github.com/jholhewres/anchored/pkg/debuglog"
 )
 
 func runHookPreToolUse(args []string) {
 	fs := newFlagSet("hook pretooluse")
-	_ = fs.String("config", "", "path to config file")
+	configPath := fs.String("config", "", "path to config file")
 	fs.Parse(args)
+
+	dlog := openDebugLogger(*configPath)
+	defer dlog.Close()
 
 	content, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		slog.Error("failed to read stdin", "error", err)
+		dlog.Event("hook.pretooluse", map[string]any{"stage": "stdin_error", "error": err.Error()})
 		os.Exit(1)
 	}
 
@@ -45,6 +51,12 @@ func runHookPreToolUse(args []string) {
 			}
 		}
 		if blocked, pattern := checkDangerousPattern(code); blocked {
+			dlog.Event("hook.pretooluse", map[string]any{
+				"stage":   "blocked",
+				"tool":    input.Tool,
+				"pattern": pattern,
+				"args":    debuglog.Snippet(string(content), 240),
+			})
 			outputJSON(map[string]string{
 				"decision": "block",
 				"reason":   "dangerous pattern detected: " + pattern,
@@ -55,6 +67,10 @@ func runHookPreToolUse(args []string) {
 
 	// Routing advice for memory-related queries
 	if mentionsMemory(input.Arguments) {
+		dlog.Event("hook.pretooluse", map[string]any{
+			"stage": "memory_hint",
+			"tool":  input.Tool,
+		})
 		outputJSON(map[string]string{
 			"decision": "allow",
 			"reason":   "consider anchored_search for memory queries",
@@ -62,6 +78,10 @@ func runHookPreToolUse(args []string) {
 		return
 	}
 
+	dlog.Event("hook.pretooluse", map[string]any{
+		"stage": "allow",
+		"tool":  input.Tool,
+	})
 	outputJSON(map[string]string{"decision": "allow"})
 }
 

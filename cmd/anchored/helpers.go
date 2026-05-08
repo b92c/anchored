@@ -9,9 +9,23 @@ import (
 	"os"
 
 	"github.com/jholhewres/anchored/pkg/config"
+	"github.com/jholhewres/anchored/pkg/debuglog"
 	"github.com/jholhewres/anchored/pkg/importer"
 	"github.com/jholhewres/anchored/pkg/memory"
 )
+
+// openDebugLogger resolves config + env to (maybe) open the NDJSON debug
+// log. Always non-nil and always safe to call Event/Close on, even when
+// disabled.
+func openDebugLogger(configPath string) *debuglog.Logger {
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		// Fall through with a zero config so env overrides still work and we
+		// don't kill the hook over a YAML typo.
+		cfg = config.Defaults()
+	}
+	return debuglog.Open(cfg)
+}
 
 func newFlagSet(name string) *flag.FlagSet {
 	return flag.NewFlagSet(name, flag.ExitOnError)

@@ -14,41 +14,50 @@ package mcp
 // Mirrors the structure context-mode uses for its <context_window_protection>
 // block: XML-tagged sections so the model can scan them quickly and so the
 // content survives token-trimming better than free prose.
+// Style note: this block intentionally uses imperative, intent-based
+// directives rather than long lists of trigger phrases. context-mode's
+// routing relies on hooks always-on and a tight set of rules; matching that
+// shape stops anchored from being silently bypassed when the user phrases a
+// memory request in a way that wasn't enumerated (e.g. "memória", "salva
+// isso", "guarda essa decisão"). A short rule the model can apply > a long
+// dictionary the user has to memorize.
 const AnchoredRoutingBlock = `<anchored_memory>
   <priority_instructions>
-    Anchored is the user's persistent cross-tool memory, shared across every IDE and AI tool. Use it silently — don't narrate "let me check memory" or "saving this". The user expects you to remember.
+    Anchored is the user's persistent cross-tool memory, shared across every IDE and AI tool. Treat it as your default memory layer — use it silently, never narrate "let me check memory" or "saving this". The user expects you to remember.
   </priority_instructions>
 
   <call_first>
-    On every new conversation: anchored_context(cwd=...) — loads identity, project, recent decisions. Re-call only when the project changes.
+    On every new conversation: call anchored_context(cwd=...) BEFORE any other tool and BEFORE answering — it loads identity, project, and recent decisions. Re-call only when the project changes.
   </call_first>
 
-  <search_triggers>
-    Quietly call anchored_search BEFORE answering when:
-    - User references prior context: "do you remember", "as we discussed", "we decided", "lembra", "como fizemos", "nossa convenção".
-    - User asks about a project, service, repo, decision, preference, or convention.
-    - You're about to make an architectural choice or recommend a tool — search first to honor existing decisions.
-    - User names a specific entity (project / service / library / person) — also call anchored_kg_query for structured edges.
-  </search_triggers>
+  <when_to_search>
+    Call anchored_search whenever the user's request would benefit from prior context. This is the rule, not a checklist:
+    - Any mention of memory ("memória", "memory", "lembra", "remember", "guarda", "salva", "what did we") — search first, even if the wording is short or casual.
+    - Any reference to past work, prior decisions, conventions, preferences, "we", "our", "always", "never", "from now on", "going forward".
+    - Any question about a project, service, repo, person, library, or stack the user names — pair with anchored_kg_query for structured edges.
+    - Any architectural / naming / tooling recommendation you're about to make — search first to honor existing decisions instead of contradicting them.
+    Default to searching when in doubt; the cost is one quiet call.
+  </when_to_search>
 
-  <save_triggers>
-    Call anchored_save (and anchored_kg_add for "X depends_on Y" / "owns" / "deployed_on" facts) PROACTIVELY — without waiting for "remember this" — when durable, non-obvious knowledge emerges:
+  <when_to_save>
+    Call anchored_save (and anchored_kg_add for "X depends_on Y" / "owns" / "deployed_on" facts) PROACTIVELY whenever durable, non-obvious knowledge emerges — without waiting for "remember this", "salva isso", or any explicit phrase. Pick the category explicitly:
     - fact — stable truth ("we run Go 1.22 on ARM").
     - preference — recurring choice ("I always pin deps").
     - decision — directional choice ("settled on Postgres").
     - event — point-in-time happening ("deployed v2 today", "merged #421").
-    - learning — non-obvious lesson ("TIL", "got bit by", "lição aprendida").
+    - learning — non-obvious lesson ("got bit by", "post-mortem", "lição aprendida").
     - plan — intent ("TODO: migrate", "next up: refactor").
     - summary — consolidated recap.
-    Pick the category explicitly. Skip ephemerals and anything inferable from the codebase.
-  </save_triggers>
+    Skip ephemerals and anything inferable from the codebase.
+  </when_to_save>
 
   <session_continuity>
-    Decisions and preferences saved via anchored_save remain authoritative across sessions and tools. When the user contradicts a stored fact, prefer anchored_update over creating a duplicate; when they revoke one, use anchored_forget. Don't drop these directives as the conversation grows.
+    Decisions and preferences saved via anchored_save remain authoritative across sessions and tools. When the user contradicts a stored fact, prefer anchored_update over creating a duplicate; when they revoke one, use anchored_forget. These directives stay active for the whole conversation — don't drop them as it grows.
   </session_continuity>
 
   <forbidden>
     NEVER save secrets, credentials, tokens, or PII.
     NEVER narrate the search/save — just do it and let results inform the answer.
+    NEVER require the user to say a magic phrase before you use memory; the rules above are sufficient.
   </forbidden>
 </anchored_memory>`

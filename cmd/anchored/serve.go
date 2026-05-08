@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jholhewres/anchored/pkg/config"
+	"github.com/jholhewres/anchored/pkg/debuglog"
 	"github.com/jholhewres/anchored/pkg/kg"
 	"github.com/jholhewres/anchored/pkg/memory"
 	"github.com/jholhewres/anchored/pkg/mcp"
@@ -84,6 +85,16 @@ func serveSTDIO(ctx context.Context, memSvc *memory.Service, cfg *config.Config,
 	}
 
 	server := mcp.NewServer(memSvc, kgSvc, sessionMgr, optimizer, Version, logFn)
+
+	// Optional NDJSON event log for post-mortem analysis. No-op when
+	// debug.enabled is false (the default) and ANCHORED_DEBUG isn't set.
+	dlog := debuglog.Open(cfg)
+	defer dlog.Close()
+	if dlog.Enabled() {
+		logFn.Info("anchored debug log enabled", "path", dlog.Path())
+		dlog.Event("server.start", map[string]any{"version": Version})
+	}
+	server.SetDebugLogger(dlog)
 
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)

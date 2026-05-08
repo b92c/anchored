@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jholhewres/anchored/pkg/debuglog"
 	"github.com/jholhewres/anchored/pkg/memory"
 )
 
@@ -17,9 +18,13 @@ func runHookPreCompact(args []string) {
 	cwd := fs.String("cwd", "", "current working directory")
 	fs.Parse(args)
 
+	dlog := openDebugLogger(*configPath)
+	defer dlog.Close()
+
 	content, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		slog.Error("failed to read stdin", "error", err)
+		dlog.Event("hook.precompact", map[string]any{"stage": "stdin_error", "error": err.Error()})
 		os.Exit(1)
 	}
 
@@ -69,6 +74,15 @@ func runHookPreCompact(args []string) {
 		os.Exit(1)
 	}
 
+	dlog.Event("hook.precompact", map[string]any{
+		"stage":      "saved",
+		"session_id": *sessionID,
+		"project_id": projectID,
+		"text_len":   len(text),
+		"memory_id":  m.ID,
+		"event_id":   eventID,
+		"head":       debuglog.Snippet(text, 200),
+	})
 	outputJSON(map[string]any{
 		"snapshot_saved": true,
 		"memory_id":      m.ID,

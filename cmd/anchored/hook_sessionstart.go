@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jholhewres/anchored/pkg/debuglog"
 	"github.com/jholhewres/anchored/pkg/mcp"
 )
 
@@ -24,9 +25,13 @@ func runHookSessionStart(args []string) {
 	cwd := fs.String("cwd", "", "current working directory")
 	fs.Parse(args)
 
+	dlog := openDebugLogger(*configPath)
+	defer dlog.Close()
+
 	content, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		slog.Error("failed to read stdin", "error", err)
+		dlog.Event("hook.sessionstart", map[string]any{"stage": "stdin_error", "error": err.Error()})
 		emitSessionStart(mcp.AnchoredRoutingBlock)
 		return
 	}
@@ -53,8 +58,17 @@ func runHookSessionStart(args []string) {
 
 	additional := mcp.AnchoredRoutingBlock
 
+	dlog.Event("hook.sessionstart", map[string]any{
+		"stage":      "start",
+		"session_id": input.SessionID,
+		"cwd":        cwdVal,
+		"input_len":  len(content),
+		"input_head": debuglog.Snippet(string(content), 200),
+	})
+
 	_, _, svc, err := initService(*configPath)
 	if err != nil {
+		dlog.Event("hook.sessionstart", map[string]any{"stage": "service_init_failed", "error": err.Error()})
 		// Routing block alone is still useful even if the DB is unavailable.
 		emitSessionStart(additional)
 		return
@@ -97,6 +111,12 @@ func runHookSessionStart(args []string) {
 		additional += sb.String()
 	}
 
+	dlog.Event("hook.sessionstart", map[string]any{
+		"stage":         "emitted",
+		"project_id":    projectID,
+		"recent_events": len(recent),
+		"context_bytes": len(additional),
+	})
 	emitSessionStart(additional)
 }
 

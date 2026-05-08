@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"sync/atomic"
+	"time"
 
+	"github.com/jholhewres/anchored/pkg/debuglog"
 	"github.com/jholhewres/anchored/pkg/kg"
 	"github.com/jholhewres/anchored/pkg/memory"
 	"github.com/jholhewres/anchored/pkg/session"
@@ -83,6 +85,7 @@ type Server struct {
 	sessions *session.Manager
 	optimizer OptimizerFacade
 	logger   *slog.Logger
+	dlog     *debuglog.Logger
 	version  string
 
 	// searchCalls counts anchored_ctx_search invocations within the current
@@ -109,11 +112,21 @@ func NewServer(mem *memory.Service, kg *kg.KG, sessions *session.Manager, optimi
 	return &Server{mem: mem, kg: kg, sessions: sessions, optimizer: optimizer, logger: logger, version: version}
 }
 
+// SetDebugLogger attaches an optional NDJSON debug logger. When set, every
+// inbound MCP message and every tool dispatch is recorded so users can audit
+// "did the model actually call anchored?" after the fact. Safe with nil.
+func (s *Server) SetDebugLogger(d *debuglog.Logger) {
+	s.dlog = d
+}
+
 func (s *Server) HandleMessage(ctx context.Context, data []byte) []byte {
 	req, err := ParseRequest(data)
 	if err != nil {
+		s.dlog.Event("mcp.parse_error", map[string]any{"error": err.Error(), "raw": debuglog.Snippet(string(data), 200)})
 		return MarshalResponse(NewErrorResponse(nil, NewError(-32700, err.Error())))
 	}
+
+	s.dlog.Event("mcp.message", map[string]any{"method": req.Method, "bytes": len(data)})
 
 	switch req.Method {
 	case "initialize":
@@ -163,13 +176,33 @@ func (s *Server) handleToolsCall(ctx context.Context, id json.RawMessage, params
 		Arguments json.RawMessage `json:"arguments,omitempty"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
+		s.dlog.Event("mcp.tool_call", map[string]any{"stage": "params_invalid", "error": err.Error()})
 		return MarshalResponse(NewErrorResponse(id, InvalidParams("invalid params")))
 	}
 
+	start := time.Now()
 	result, err := s.callTool(ctx, p.Name, p.Arguments)
+	latencyMs := time.Since(start).Milliseconds()
+
 	if err != nil {
+		s.dlog.Event("mcp.tool_call", map[string]any{
+			"stage":      "error",
+			"tool":       p.Name,
+			"latency_ms": latencyMs,
+			"args":       debuglog.Snippet(string(p.Arguments), 240),
+			"error":      err.Error(),
+		})
 		return MarshalResponse(NewErrorResponse(id, InternalError(err)))
 	}
+
+	s.dlog.Event("mcp.tool_call", map[string]any{
+		"stage":          "ok",
+		"tool":           p.Name,
+		"latency_ms":     latencyMs,
+		"args":           debuglog.Snippet(string(p.Arguments), 240),
+		"result_bytes":   len(result),
+		"result_preview": debuglog.Snippet(result, 200),
+	})
 
 	return MarshalResponse(NewResponse(id, map[string]any{
 		"content": []map[string]any{

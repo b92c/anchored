@@ -17,6 +17,22 @@ type Config struct {
 	Indexer         IndexerConfig         `yaml:"indexer"`
 	Dream           DreamConfig           `yaml:"dream"`
 	ContextOptimizer ContextOptimizerConfig `yaml:"context_optimizer"`
+	Debug           DebugConfig           `yaml:"debug"`
+}
+
+// DebugConfig controls anchored's optional NDJSON event log.
+//
+// When Enabled is false (the default), no log file is created and no events
+// are recorded — the cost of the feature is one struct field. When Enabled is
+// true, every hook invocation and every MCP tool call is appended to Path as
+// a single JSON line, suitable for `jq` post-mortem analysis.
+//
+// Env overrides (handled in pkg/debuglog): ANCHORED_DEBUG and
+// ANCHORED_DEBUG_PATH always win, so users can flip logging on without
+// editing config.yaml.
+type DebugConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Path    string `yaml:"path"`
 }
 
 type ContextOptimizerConfig struct {
@@ -103,6 +119,10 @@ func Defaults() *Config {
 			SandboxTimeout: 30,
 			MaxOutputKB:    1024,
 			FetchCacheTTL:  24,
+		},
+		Debug: DebugConfig{
+			Enabled: false,
+			Path:    "~/.anchored/debug.log",
 		},
 	}
 }

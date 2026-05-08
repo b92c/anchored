@@ -1,14 +1,15 @@
 ---
 name: anchored
 description: |
-  Use Anchored memory tools (anchored_context, anchored_search, anchored_save, kg_query, kg_add) to
-  remember the user across sessions and IDEs. Triggers: "do you remember", "what did we decide",
-  "as we discussed", "the X we set up", "how do we usually", "our convention", "I always",
-  "I never", "from now on", "going forward", "settled on", "decided", "TIL", "got bit by",
-  "lição aprendida", "vimos que", "fechamos em", "vamos com", "TODO", "next up",
-  "deployed", "incident", "post-mortem", project/service/team/stack questions, naming choices,
-  architecture questions, requests that depend on prior context. Also triggers on every
-  conversation start (call anchored_context first).
+  Use Anchored memory tools (anchored_context, anchored_search, anchored_save, kg_query, kg_add)
+  as the default cross-tool memory for this user. Treat memory as always-on, not a feature
+  reached for only on specific phrases. Trigger this skill whenever: any mention of memory
+  ("memória", "memory", "lembra", "remember", "guarda", "salva", "what did we"); any reference
+  to prior work, decisions, conventions, preferences, "we", "our", "always", "never", "from now
+  on", "going forward"; any question about a project, service, repo, person, library, or stack
+  the user names; any architectural / naming / tooling recommendation about to be made (search
+  first to honor prior decisions); and on every new conversation (call anchored_context first).
+  Default to using memory when in doubt.
 ---
 
 # Anchored: Persistent Cross-Tool Memory

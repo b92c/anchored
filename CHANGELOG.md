@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.4] - 2026-05-08
+
+### Added
+
+- **Opt-in NDJSON debug log** — new `pkg/debuglog` writes one JSON event per line covering every hook firing (SessionStart, UserPromptSubmit, PostToolUse, PreCompact, PreToolUse) and every MCP message / tool call (with latency, args preview, result preview). Disabled by default; enable via `debug.enabled: true` in `~/.anchored/config.yaml` or `ANCHORED_DEBUG=1` env. Path defaults to `~/.anchored/debug.log` and is owner-only (`0o600`) since events embed prompt heads and tool args. Lets users analyze "did anchored actually fire?" after the fact instead of guessing.
+- **Auto-update integrity** — the background self-updater now downloads `checksums.txt` from the release, validates the tarball's SHA-256 against the published digest before swapping the binary, and refuses to install on mismatch. The previous binary is preserved at `<dst>.prev` so a bad update can be rolled back with one `mv`. New unit tests cover format parsing, mismatch rejection (no `.prev` created, no `.new` leaked), and happy-path swap.
+
+### Changed
+
+- **Routing block reframed as intent-based directives** — `<anchored_memory>` in `pkg/mcp/routing.go` and the skill description in `skills/anchored/SKILL.md` no longer enumerate dictionaries of trigger phrases. Replaced with rules ("any mention of memory/memória/lembra/remember", "any reference to past work / 'we' / 'our'", "any architectural recommendation about to be made — search first") plus an explicit `<forbidden>` clause: `NEVER require the user to say a magic phrase before you use memory`. Goal: stop silent bypass when the user phrases a memory request casually or in a language not in the list.
+- **Updater error visibility** — release-check failures (network down, repo renamed, asset matrix changed, GitHub rate-limit) now log at `Warn` instead of `Debug`, so users running with default `Info` log level see when their auto-update is broken.
+
 ## [0.4.3] - 2026-05-06
 
 ### Changed

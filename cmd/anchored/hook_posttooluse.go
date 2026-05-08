@@ -9,6 +9,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+
+	"github.com/jholhewres/anchored/pkg/debuglog"
 )
 
 func runHookPostToolUse(args []string) {
@@ -18,9 +20,13 @@ func runHookPostToolUse(args []string) {
 	cwd := fs.String("cwd", "", "current working directory")
 	fs.Parse(args)
 
+	dlog := openDebugLogger(*configPath)
+	defer dlog.Close()
+
 	content, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		slog.Error("failed to read stdin", "error", err)
+		dlog.Event("hook.posttooluse", map[string]any{"stage": "stdin_error", "error": err.Error()})
 		os.Exit(1)
 	}
 
@@ -71,6 +77,14 @@ func runHookPostToolUse(args []string) {
 		return
 	}
 
+	dlog.Event("hook.posttooluse", map[string]any{
+		"stage":      "recorded",
+		"session_id": *sessionID,
+		"project_id": projectID,
+		"tool":       input.Tool,
+		"event_id":   eventID,
+		"summary":    debuglog.Snippet(summary, 200),
+	})
 	outputJSON(map[string]any{
 		"recorded": true,
 		"event_id": eventID,

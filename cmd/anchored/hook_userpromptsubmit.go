@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 
+	"github.com/jholhewres/anchored/pkg/debuglog"
 	"github.com/jholhewres/anchored/pkg/mcp"
 )
 
@@ -14,12 +16,28 @@ import (
 // SessionStart but with hookEventName="UserPromptSubmit".
 func runHookUserPromptSubmit(args []string) {
 	fs := newFlagSet("hook userpromptsubmit")
+	configPath := fs.String("config", "", "path to config file")
 	fs.Parse(args)
 
-	// Drain stdin so Claude Code doesn't observe a closed pipe; we don't act
-	// on the prompt text yet, but reading prevents EPIPE noise.
+	dlog := openDebugLogger(*configPath)
+	defer dlog.Close()
+
+	// Drain stdin so Claude Code doesn't observe a closed pipe; the prompt
+	// text is opportunistically inspected for debug telemetry — we never
+	// gate injection on it, since the routing block is small enough to
+	// re-emit unconditionally.
 	body, _ := io.ReadAll(os.Stdin)
-	_ = body
+	var parsed struct {
+		SessionID string `json:"session_id"`
+		Prompt    string `json:"prompt"`
+	}
+	_ = json.Unmarshal(body, &parsed)
+	dlog.Event("hook.userpromptsubmit", map[string]any{
+		"stage":       "emitted",
+		"session_id":  parsed.SessionID,
+		"prompt_len":  len(parsed.Prompt),
+		"prompt_head": debuglog.Snippet(parsed.Prompt, 240),
+	})
 
 	// We could parse `body` here to gate injection on memory triggers ("do you
 	// remember", "we decided", etc.). For now the routing block is small

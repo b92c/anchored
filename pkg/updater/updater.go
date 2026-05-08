@@ -9,8 +9,11 @@ package updater
 
 import (
 	"archive/tar"
+	"bufio"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -86,9 +89,13 @@ func Run(ctx context.Context, opts Options) {
 	checkCtx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
 
-	latest, asset, err := fetchLatest(checkCtx, repo)
+	latest, asset, assetName, checksums, err := fetchLatest(checkCtx, repo)
 	if err != nil {
-		log.Debug("autoupdate: check failed", "error", err)
+		// Promoted from Debug → Warn: silent failures here meant users had
+		// no signal when their auto-update was broken (network down, repo
+		// renamed, asset matrix changed, GitHub rate-limit). Background
+		// goroutine, so noise stays minimal — one line per startup at most.
+		log.Warn("autoupdate: check failed", "error", err)
 		return
 	}
 
@@ -102,12 +109,21 @@ func Run(ctx context.Context, opts Options) {
 	dlCtx, dlCancel := context.WithTimeout(ctx, dlTimeout)
 	defer dlCancel()
 
-	if err := downloadAndReplace(dlCtx, asset, binPath); err != nil {
+	wantSum, err := fetchChecksum(dlCtx, checksums, assetName)
+	if err != nil {
+		// Refuse to install without a verified digest. GoReleaser publishes
+		// checksums.txt for every release; if it isn't reachable, treat the
+		// download as untrusted and skip the swap.
+		log.Warn("autoupdate: checksum lookup failed, skipping install", "error", err)
+		return
+	}
+
+	if err := downloadAndReplace(dlCtx, asset, binPath, wantSum); err != nil {
 		log.Warn("autoupdate: install failed", "error", err)
 		return
 	}
 
-	log.Info("autoupdate: installed, restart MCP server to activate", "version", latest, "path", binPath)
+	log.Info("autoupdate: installed, restart MCP server to activate", "version", latest, "path", binPath, "backup", binPath+".prev")
 }
 
 type ghRelease struct {
@@ -118,45 +134,111 @@ type ghRelease struct {
 	} `json:"assets"`
 }
 
-func fetchLatest(ctx context.Context, repo string) (version string, assetURL string, err error) {
+// fetchLatest returns version, asset URL, asset filename, and the
+// checksums.txt URL from the latest release. The asset filename is needed
+// later to look up the right line in checksums.txt; the checksum URL is
+// resolved here so we can fail fast if GoReleaser stopped publishing it.
+func fetchLatest(ctx context.Context, repo string) (version string, assetURL string, assetName string, checksumsURL string, err error) {
 	url := fmt.Sprintf(apiURL, repo)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", "", err
+		return "", "", "", "", err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "anchored-updater")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", "", err
+		return "", "", "", "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("github releases: HTTP %d", resp.StatusCode)
+		return "", "", "", "", fmt.Errorf("github releases: HTTP %d", resp.StatusCode)
 	}
 
 	var rel ghRelease
 	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
-		return "", "", fmt.Errorf("decode release: %w", err)
+		return "", "", "", "", fmt.Errorf("decode release: %w", err)
 	}
 
 	version = strings.TrimPrefix(rel.TagName, "v")
 	if version == "" {
-		return "", "", errors.New("empty tag_name in release")
+		return "", "", "", "", errors.New("empty tag_name in release")
 	}
 
 	wantSuffix := fmt.Sprintf("_%s_%s_%s.tar.gz", version, runtime.GOOS, runtime.GOARCH)
 	for _, a := range rel.Assets {
 		if strings.HasSuffix(a.Name, wantSuffix) {
-			return version, a.BrowserDownloadURL, nil
+			assetURL = a.BrowserDownloadURL
+			assetName = a.Name
+			break
 		}
 	}
-	return "", "", fmt.Errorf("no asset for %s/%s with version %s", runtime.GOOS, runtime.GOARCH, version)
+	if assetURL == "" {
+		return "", "", "", "", fmt.Errorf("no asset for %s/%s with version %s", runtime.GOOS, runtime.GOARCH, version)
+	}
+
+	for _, a := range rel.Assets {
+		if a.Name == "checksums.txt" {
+			checksumsURL = a.BrowserDownloadURL
+			break
+		}
+	}
+	if checksumsURL == "" {
+		return "", "", "", "", errors.New("checksums.txt not in release assets")
+	}
+	return version, assetURL, assetName, checksumsURL, nil
 }
 
-func downloadAndReplace(ctx context.Context, url, dst string) error {
+// fetchChecksum downloads checksums.txt and returns the lowercase hex sha256
+// for assetName. The file is small (one line per asset, ~80 bytes each), so
+// reading it whole is fine. Format follows GoReleaser/sha256sum convention:
+//   <hex digest>  <filename>
+func fetchChecksum(ctx context.Context, url, assetName string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "anchored-updater")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("checksums.txt: HTTP %d", resp.StatusCode)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		// Two-field split: digest and filename. GoReleaser uses two spaces;
+		// allow any whitespace to stay compatible with sha256sum's output.
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		if fields[len(fields)-1] == assetName {
+			return strings.ToLower(fields[0]), nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("read checksums: %w", err)
+	}
+	return "", fmt.Errorf("checksum not found for %s", assetName)
+}
+
+// downloadAndReplace streams the tarball, validates its SHA-256 against
+// wantSum, extracts the embedded `anchored` binary, and atomically swaps
+// it into dst while keeping the previous binary at dst+".prev" so a bad
+// update can be rolled back manually with one rename.
+func downloadAndReplace(ctx context.Context, url, dst, wantSum string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -173,7 +255,14 @@ func downloadAndReplace(ctx context.Context, url, dst string) error {
 		return fmt.Errorf("download: HTTP %d", resp.StatusCode)
 	}
 
-	gz, err := gzip.NewReader(resp.Body)
+	// Tee the raw response body into the hasher so we digest exactly what
+	// the upstream signed. gzip.NewReader is allowed to stop reading at the
+	// gzip EOF before consuming the whole HTTP body, so we drain the rest
+	// after extraction completes — otherwise the digest would be partial.
+	hasher := sha256.New()
+	tee := io.TeeReader(resp.Body, hasher)
+
+	gz, err := gzip.NewReader(tee)
 	if err != nil {
 		return fmt.Errorf("gzip: %w", err)
 	}
@@ -217,7 +306,35 @@ func downloadAndReplace(ctx context.Context, url, dst string) error {
 		return errors.New("anchored binary not found in tarball")
 	}
 
+	// Drain any trailing bytes the gzip reader didn't consume so the hash
+	// covers the full tar.gz payload, then compare.
+	if _, err := io.Copy(io.Discard, tee); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("drain body: %w", err)
+	}
+	gotSum := hex.EncodeToString(hasher.Sum(nil))
+	if gotSum != strings.ToLower(wantSum) {
+		os.Remove(tmpPath)
+		return fmt.Errorf("checksum mismatch: want %s got %s", wantSum, gotSum)
+	}
+
+	// Two-step swap so a bad new binary can be rolled back to .prev.
+	// On Linux/macOS rename is atomic within the same filesystem, and dst
+	// + ".new" + ".prev" all live in dst's parent dir by construction.
+	prevPath := dst + ".prev"
+	// Best-effort: only matters when dst already exists (fresh installs
+	// from scratch hit ENOENT, which is fine).
+	if _, statErr := os.Stat(dst); statErr == nil {
+		_ = os.Remove(prevPath) // discard any stale backup from a prior cycle
+		if err := os.Rename(dst, prevPath); err != nil {
+			os.Remove(tmpPath)
+			return fmt.Errorf("backup current: %w", err)
+		}
+	}
 	if err := os.Rename(tmpPath, dst); err != nil {
+		// Recovery: try to put the old binary back so the user isn't left
+		// with no executable at all.
+		_ = os.Rename(prevPath, dst)
 		os.Remove(tmpPath)
 		return fmt.Errorf("rename: %w", err)
 	}
