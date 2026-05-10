@@ -5,7 +5,10 @@ import (
 	"os"
 )
 
-var Version = "0.4.5"
+// Version is overridden at build time via `-ldflags -X main.Version=$(cat VERSION)`
+// (see Makefile and .goreleaser.yaml). The "dev" placeholder is what you see
+// when running `go build` directly without the Makefile target.
+var Version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {

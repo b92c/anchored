@@ -7,10 +7,16 @@ ifeq ($(UNAME_S),Darwin)
   CGO_LDFLAGS=
 endif
 
-.PHONY: build test lint clean
+# Single source of truth for the version. Build injects it into main.Version
+# via -ldflags so the binary, plugin manifests, and goreleaser tags stay in
+# lockstep. Bumping the release is `echo X.Y.Z > VERSION && make sync-version`.
+VERSION := $(shell cat VERSION)
+LDFLAGS := -X main.Version=$(VERSION)
+
+.PHONY: build test lint clean sync-version
 
 build:
-	CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" go build -o bin/anchored ./cmd/anchored/
+	CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" go build -ldflags "$(LDFLAGS)" -o bin/anchored ./cmd/anchored/
 
 test:
 	CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" go test ./... -v
@@ -20,3 +26,6 @@ lint:
 
 clean:
 	rm -rf bin/
+
+sync-version:
+	go run ./cmd/version-sync
