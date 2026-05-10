@@ -12,12 +12,14 @@ import (
 	"github.com/jholhewres/anchored/pkg/debuglog"
 )
 
-// runHookPreToolUse inspects an MCP tool call before execution. NOTE: this
-// hook is NOT currently registered in hooks/hooks.json — the dangerous-pattern
-// detector below is too coarse (substring matching) for general-purpose tool
-// calls and would generate false positives on legitimate Bash. Keep the code
-// for opt-in scenarios (manual wiring, future targeted matchers) but treat it
-// as inert in the default plugin install.
+// runHookPreToolUse inspects an anchored sandbox tool call before execution
+// and blocks payloads that contain dangerous patterns. The hook IS registered
+// in hooks/hooks.json with a narrow matcher (mcp__anchored__anchored_execute*)
+// — the matcher exists because checkDangerousPattern is substring-based and
+// would generate false positives if applied to general-purpose Bash. Limiting
+// it to the sandbox tools means we only block code the user explicitly asked
+// us to execute via anchored, where false positives are easier to reason
+// about and the cost of a false negative (rm -rf /, mkfs, dd) is highest.
 func runHookPreToolUse(args []string) {
 	fs := newFlagSet("hook pretooluse")
 	configPath := fs.String("config", "", "path to config file")

@@ -1,5 +1,5 @@
 {
-  "description": "Anchored hooks — SessionStart + UserPromptSubmit inject the persistent-memory routing block; PostToolUse / PreCompact capture session events.",
+  "description": "Anchored hooks — SessionStart + UserPromptSubmit inject the persistent-memory routing block (with pre-search hits when prompts mention memory); PostToolUse / PreCompact capture session events; PreToolUse blocks dangerous code inside anchored sandbox tools.",
   "hooks": {
     "SessionStart": [
       {
@@ -19,6 +19,17 @@
           {
             "type": "command",
             "command": "anchored hook userpromptsubmit"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "mcp__anchored__anchored_execute|mcp__anchored__anchored_execute_file|mcp__anchored__anchored_batch_execute",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "anchored hook pretooluse"
           }
         ]
       }
