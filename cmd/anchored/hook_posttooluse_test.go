@@ -1,0 +1,172 @@
+package main
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"strings"
+	"testing"
+	"unicode/utf8"
+
+	ctxpkg "github.com/jholhewres/anchored/pkg/context"
+	_ "github.com/mattn/go-sqlite3"
+)
+
+// TestPostToolUseInsertSQL_AgainstSchema executes the exact INSERT statement
+// the hook uses against an in-memory DB seeded with MigrationSQL +
+// MigrationSQL009. Catches column-count / column-order regressions
+// (the bug 0.4.5 fixed).
+func TestPostToolUseInsertSQL_AgainstSchema(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(ctxpkg.MigrationSQL); err != nil {
+		t.Fatalf("migration: %v", err)
+	}
+	if _, err := db.Exec(ctxpkg.MigrationSQL009); err != nil {
+		t.Fatalf("migration 009: %v", err)
+	}
+
+	_, err = db.ExecContext(context.Background(), postToolUseInsertSQL,
+		"event-1", "sess-A", "proj-X", "Bash", `{"stdout":"hi"}`, `{"cwd":"/tmp"}`,
+	)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	var (
+		eid, sid, pid, etype, tname, summary, metadata string
+		priority                                       int
+	)
+	err = db.QueryRow(`SELECT id, session_id, project_id, event_type, priority, tool_name, summary, metadata
+		FROM session_events WHERE id = ?`, "event-1").Scan(
+		&eid, &sid, &pid, &etype, &priority, &tname, &summary, &metadata,
+	)
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if eid != "event-1" || sid != "sess-A" || pid != "proj-X" {
+		t.Errorf("ids: got %q/%q/%q", eid, sid, pid)
+	}
+	if etype != "tool_call" || priority != 3 {
+		t.Errorf("event_type/priority: %q/%d (want tool_call/3)", etype, priority)
+	}
+	if tname != "Bash" {
+		t.Errorf("tool_name: %q", tname)
+	}
+	if summary != `{"stdout":"hi"}` {
+		t.Errorf("summary: %q", summary)
+	}
+	if metadata != `{"cwd":"/tmp"}` {
+		t.Errorf("metadata: %q", metadata)
+	}
+}
+
+func TestSummarizeToolEvent_PrefersResponse(t *testing.T) {
+	resp := json.RawMessage(`{"stdout":"hello\nworld","exit":0}`)
+	in := json.RawMessage(`{"command":"echo hi"}`)
+	got := summarizeToolEvent(resp, in, 500)
+	if !strings.Contains(got, `"stdout":"hello\nworld"`) {
+		t.Fatalf("response not preserved: %q", got)
+	}
+	if strings.Contains(got, "echo hi") {
+		t.Fatalf("input should be ignored when response present: %q", got)
+	}
+}
+
+func TestSummarizeToolEvent_FallsBackToInput(t *testing.T) {
+	cases := []json.RawMessage{nil, json.RawMessage("null"), json.RawMessage("")}
+	for _, resp := range cases {
+		got := summarizeToolEvent(resp, json.RawMessage(`{"x":1}`), 500)
+		if got != `{"x":1}` {
+			t.Errorf("fallback failed for resp=%q, got %q", string(resp), got)
+		}
+	}
+}
+
+func TestSummarizeToolEvent_TruncatesAtMaxRunes(t *testing.T) {
+	long := strings.Repeat("a", 1000)
+	resp := json.RawMessage(`"` + long + `"`)
+	got := summarizeToolEvent(resp, nil, 100)
+	if utf8.RuneCountInString(got) != 100 {
+		t.Fatalf("expected exact 100 runes, got %d", utf8.RuneCountInString(got))
+	}
+}
+
+// TestSummarizeToolEvent_TruncateRespectsUTF8 guards against byte-level
+// slicing in the middle of a multibyte sequence.
+func TestSummarizeToolEvent_TruncateRespectsUTF8(t *testing.T) {
+	// Each "ção é " is 8 bytes / 6 runes; 200 reps = 1600 bytes / 1200 runes.
+	body := strings.Repeat("ção é ", 200)
+	resp, _ := json.Marshal(body)
+	got := summarizeToolEvent(json.RawMessage(resp), nil, 50)
+	if !utf8.ValidString(got) {
+		t.Fatalf("output is not valid UTF-8: %q", got)
+	}
+	if utf8.RuneCountInString(got) > 50 {
+		t.Fatalf("rune count %d > 50", utf8.RuneCountInString(got))
+	}
+}
+
+func TestSummarizeToolEvent_NormalizesWhitespace(t *testing.T) {
+	pretty := json.RawMessage("{\n  \"k\": \"v\"\n}")
+	got := summarizeToolEvent(pretty, nil, 500)
+	if got != `{"k":"v"}` {
+		t.Fatalf("compact should drop whitespace, got %q", got)
+	}
+}
+
+// TestSummarizeToolEvent_PreservesKeyOrderAndNumbers is the regression test
+// for the v0.4.5 review: Marshal(Unmarshal()) reordered keys and lossily
+// converted big integers to float64. json.Compact does neither.
+func TestSummarizeToolEvent_PreservesKeyOrderAndNumbers(t *testing.T) {
+	in := json.RawMessage(`{"stdout":"x","stderr":"y","exit":0}`)
+	if got := summarizeToolEvent(in, nil, 500); got != `{"stdout":"x","stderr":"y","exit":0}` {
+		t.Fatalf("key order changed or compaction broken: %q", got)
+	}
+
+	bigInt := json.RawMessage(`{"id":12345678901234567890}`)
+	got := summarizeToolEvent(bigInt, nil, 500)
+	if !strings.Contains(got, "12345678901234567890") {
+		t.Fatalf("large integer lost precision: %q", got)
+	}
+}
+
+func TestBuildPostToolUseMetadata(t *testing.T) {
+	got := buildPostToolUseMetadata("/tmp/x", "PostToolUse", 42)
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("metadata not valid JSON: %v — %q", err, got)
+	}
+	if parsed["cwd"] != "/tmp/x" {
+		t.Errorf("cwd: %v", parsed["cwd"])
+	}
+	if parsed["hook_event_name"] != "PostToolUse" {
+		t.Errorf("hook_event_name: %v", parsed["hook_event_name"])
+	}
+	if parsed["raw_length"].(float64) != 42 {
+		t.Errorf("raw_length: %v", parsed["raw_length"])
+	}
+}
+
+func TestBuildPostToolUseMetadata_TruncatesAt1KB(t *testing.T) {
+	huge := strings.Repeat("x", 5000)
+	got := buildPostToolUseMetadata(huge, "PostToolUse", 0)
+	if len(got) > 1024 {
+		t.Fatalf("metadata > 1024 bytes: %d", len(got))
+	}
+}
+
+func TestNewHookID_HexLength(t *testing.T) {
+	id := newHookID()
+	if len(id) != 32 {
+		t.Fatalf("expected 32-char hex id, got %d (%q)", len(id), id)
+	}
+	for _, c := range id {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			t.Fatalf("non-hex char in id: %q", id)
+		}
+	}
+}
