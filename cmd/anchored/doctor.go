@@ -186,10 +186,13 @@ type mcpProbe struct {
 }
 
 func checkMCPRegistration(home string) {
+	wsVSCode := filepath.Join(".", ".vscode", "mcp.json")
 	probes := []mcpProbe{
 		{"Claude Code", filepath.Join(home, ".claude.json"), "user", "claude mcp add -s user anchored anchored"},
 		{"Cursor", filepath.Join(home, ".cursor", "mcp.json"), "user", "anchored init --tool cursor"},
 		{"OpenCode", filepath.Join(home, ".config", "opencode", "opencode.json"), "user", "anchored init --tool opencode"},
+		{"Gemini CLI", filepath.Join(home, ".gemini", "settings.json"), "user", "anchored init --tool gemini"},
+		{"VS Code Copilot (workspace)", wsVSCode, "workspace", "run from your project root and create .vscode/mcp.json with an 'anchored' entry under mcpServers"},
 	}
 
 	for _, p := range probes {
