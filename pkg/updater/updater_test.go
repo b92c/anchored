@@ -73,8 +73,8 @@ func makeTarGz(t *testing.T, payload []byte) ([]byte, string) {
 
 func TestFetchChecksum_ParsesGoReleaserFormat(t *testing.T) {
 	body := strings.Join([]string{
-		"abc123def  anchored_0.4.4_linux_amd64.tar.gz",
-		"deadbeef00  anchored_0.4.4_darwin_arm64.tar.gz",
+		"abc123def  anchored_0.4.5_linux_amd64.tar.gz",
+		"deadbeef00  anchored_0.4.5_darwin_arm64.tar.gz",
 		"",
 	}, "\n")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +82,7 @@ func TestFetchChecksum_ParsesGoReleaserFormat(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := fetchChecksum(context.Background(), srv.URL, "anchored_0.4.4_linux_amd64.tar.gz")
+	got, err := fetchChecksum(context.Background(), srv.URL, "anchored_0.4.5_linux_amd64.tar.gz")
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}

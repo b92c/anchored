@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.5] - 2026-05-10
+
+### Fixed
+
+- **`anchored_context` actually returns context** — `pkg/mcp/server.go::toolContext` was a stub that always returned the literal string `"No memory context available yet."`, contradicting both its own tool description and the routing block's "MUST CALL FIRST" instruction. It now bundles identity (`~/.anchored/identity.md`, capped at 600 chars), project metadata (id/name/path/memory count/category breakdown), the 5 most recent durable memories scoped to the project (decision/learning/plan/preference/fact), and the 5 most recent priority-≤2 session events. Output is XML-tagged and capped at 4 KB; truncation drops whole lines from the tail and inserts `<truncated/>` to keep the closing tag intact. Falls back to the legacy string only when every section is empty.
+- **PostToolUse hook records events again** — `cmd/anchored/hook_posttooluse.go` had three compounding bugs: (a) the INSERT statement listed 9 columns but only supplied 8 values with literals (`'tool_call'`, `3`) misaligned into the wrong slots; (b) it read `--session-id` from a flag that `hooks/hooks.json` never passes; (c) the input struct decoded a `tool` field, but Claude Code sends `tool_name`/`tool_input`/`tool_response`. Net effect: 100% of PostToolUse events were silently dropped. Hook now reads the canonical Claude Code payload from stdin (with flag-based fallback), aligns the SQL exactly (9 cols / 9 values / 6 binds), prefers `tool_response` for the summary (falls back to `tool_input`), and never returns non-zero on init/insert failure — graceful JSON response only, so the upstream tool call is never blocked.
+- **`hook pretooluse` reads canonical fields** — same `tool_name`/`tool_input` migration as PostToolUse, with fallback to legacy `tool`/`arguments` for manual scripts. Doc comment now states explicitly that the hook is not registered in `hooks/hooks.json` and that `checkDangerousPattern` is too coarse for general-purpose tool calls.
+
+### Changed
+
+- **`anchored doctor` probes more clients** — added Gemini CLI (`~/.gemini/settings.json`) and VS Code Copilot workspace config (`.vscode/mcp.json`) to the MCP-registration probe set. Existing probes (Claude Code, Cursor, OpenCode) unchanged.
+
 ## [0.4.4] - 2026-05-08
 
 ### Added
