@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.6] - 2026-05-10
+
+### Added
+
+- **VERSION single-source** — new `/VERSION` file is the canonical version. `make build` reads it and injects via `-ldflags -X main.Version=$(cat VERSION)`; `make sync-version` runs `cmd/version-sync` to rewrite `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` from VERSION. Bumping is now `echo X.Y.Z > VERSION && make sync-version` instead of editing five files. The hardcoded version in `cmd/anchored/main.go` becomes a `"dev"` placeholder overridden by ldflags in real builds.
+- **Pre-search injection in UserPromptSubmit hook** — when the user prompt mentions memory cues (PT/EN word-bounded triggers: memória, lembra, decidimos, fechamos, remember, settled on, like we discussed, from now on, our, we have/did/use, …), the hook runs a project-scoped BM25 query against `memories_fts` with a 200ms timeout and injects up to 3 hits as `<anchored_search_preview>` in `additionalContext`. The agent now sees relevant memories before deciding whether to call `anchored_search` — making the right answer the path of least resistance.
+- **`memory.ListOptions.Categories` SQL filter** — list memories matching multiple categories in one SQL call instead of pulling everything and filtering in Go. `toolContext` now pulls only the durable-knowledge categories (decision/learning/plan/preference/fact) directly, so projects dominated by summary/event still surface enough actionable rows in the L0 bundle.
+- **`session_events` retention** — new `Manager.CleanupOldEvents(ctx, retention)` plus a daily goroutine in `serve.go` that drops rows older than 30 days. Without this the table grows by ~1 row per tool call (PostToolUse hook) and never shrinks. First sweep runs on startup, then every 24h until shutdown.
+- **PreToolUse hook registered with narrow matcher** — `hooks/hooks.json` now wires `anchored hook pretooluse` for `mcp__anchored__anchored_execute|_execute_file|_batch_execute` only. Substring-based dangerous-pattern detector (`rm -rf /`, `mkfs`, `dd if=/dev/zero`, `:(){:|:&};:`, `curl|sh`) is too coarse for general-purpose Bash but sound for sandbox-execute payloads where the user explicitly asked anchored to run code.
+
+### Changed
+
+- **Lightweight hook DB init** — `hook_posttooluse` and `hook_sessionstart` no longer call `memory.NewService` (which loads ONNX, ~470MB memory map + cold-start cost). New `openHookContext` opens the DB direct + `project.Detector` only — every PostToolUse firing now pays a few milliseconds instead of bootstrapping the full search pipeline.
+- **`toolContext` queries run in parallel** — identity read, project meta lookup, project-scoped stats, and recent memories+events run in 4 concurrent goroutines via `sync.WaitGroup`. Slower DBs see ~2-3× faster bundle assembly.
+- **`anchored_search` returns structured XML** — hits are now wrapped in `<anchored_search query="…" count="N">…<hit id=… category=… score=… [project=…]>content</hit>…</anchored_search>` instead of a numbered list. LLM agents can integrate fragments directly without reformatting; attributes are XML-escaped.
+- **Tighter tool descriptions** — `anchored_context` and `anchored_search` descriptions in `pkg/mcp/tools.go` shrunk to one paragraph each with explicit example triggers (PT-BR + EN). Short imperatives plus concrete examples drive better tool-call rates than long lists.
+- **`runHookPostToolUse` split into wiring + core** — new `recordPostToolUseEvent(deps PostToolUseDeps)` takes stdin/stdout/db/resolver as injectable dependencies. Production runs go through `runHookPostToolUse` as before; tests now exercise the full stdin → DB path against an in-memory sqlite without touching `os.Stdin`/`os.Stdout`.
+
 ## [0.4.5] - 2026-05-10
 
 ### Fixed

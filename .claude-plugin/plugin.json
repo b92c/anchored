@@ -1,14 +1,10 @@
 {
-  "name": "anchored",
-  "version": "0.4.5",
-  "description": "Persistent cross-tool memory for AI coding agents. Single binary, zero dependencies, local-first. Shared between every IDE and AI tool you use.",
   "author": {
     "name": "jholhewres",
     "url": "https://github.com/jholhewres"
   },
+  "description": "Persistent cross-tool memory for AI coding agents. Single binary, zero dependencies, local-first. Shared between every IDE and AI tool you use.",
   "homepage": "https://github.com/jholhewres/anchored",
-  "repository": "https://github.com/jholhewres/anchored",
-  "license": "MIT",
   "keywords": [
     "mcp",
     "memory",
@@ -19,9 +15,13 @@
     "fts5",
     "local-first"
   ],
+  "license": "MIT",
   "mcpServers": {
     "anchored": {
       "command": "anchored"
     }
-  }
+  },
+  "name": "anchored",
+  "repository": "https://github.com/jholhewres/anchored",
+  "version": "0.4.6"
 }
