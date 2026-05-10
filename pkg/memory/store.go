@@ -41,7 +41,11 @@ type ListOptions struct {
 	Limit     int
 	Offset    int
 	Category  string
-	ProjectID string
+	// Categories lets callers filter on multiple categories with one query.
+	// When non-empty, takes precedence over Category. Use it for L0 context
+	// builders that want decision/learning/plan/preference/fact in one shot.
+	Categories []string
+	ProjectID  string
 }
 
 type StoreStats struct {

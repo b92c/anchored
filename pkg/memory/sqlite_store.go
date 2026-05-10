@@ -247,7 +247,17 @@ func (s *SQLiteStore) List(ctx context.Context, opts ListOptions) ([]Memory, err
 
 	conditions = append(conditions, "deleted_at IS NULL")
 
-	if opts.Category != "" {
+	switch {
+	case len(opts.Categories) > 0:
+		// Build a `category IN (?, ?, ...)` clause. ?-placeholders only —
+		// driver handles escaping; never inline category strings.
+		marks := make([]string, len(opts.Categories))
+		for i, c := range opts.Categories {
+			marks[i] = "?"
+			args = append(args, c)
+		}
+		conditions = append(conditions, "category IN ("+strings.Join(marks, ",")+")")
+	case opts.Category != "":
 		conditions = append(conditions, "category = ?")
 		args = append(args, opts.Category)
 	}
