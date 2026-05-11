@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.7] - 2026-05-10
+
+### Added
+
+- **Plugin drift detection + opt-in auto-sync on SessionStart** — the SessionStart hook now compares the binary's compile-time version against the installed Claude Code plugin cache (`~/.claude/plugins/cache/anchored/anchored/<X.Y.Z>/`) and, when out of sync, injects an `<anchored_plugin_update>` notice into `additionalContext`. When `config.Plugin.AutoUpdate` is true (the default), it also fast-forwards the marketplace git mirror and removes the stale cache dir so Claude Code reinstalls from the updated mirror on its next launch. Closes the v0.4.x gap where the binary auto-updated to a new release but the plugin cache (and therefore the hooks) stayed pinned to whatever was first installed.
+- **`config.Plugin` block** — `auto_update` (default true), `marketplace_dir`, and `cache_dir` give users control over the auto-sync paths. Defaults target the canonical Claude Code locations; set `auto_update: false` to receive the manual-fix notice without any side effects.
+
+### Safety
+
+- `git pull --ff-only` is invoked under a 10-second context timeout with `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS=/bin/true`, `SSH_ASKPASS=/bin/true`, and `GIT_OPTIONAL_LOCKS=0` — an unreachable remote, missing credential, or askpass GUI cannot hang SessionStart.
+- Mutating operations are guarded by an advisory flock at `~/.anchored/plugin_sync.lock` (non-blocking). Two Claude Code windows opening simultaneously won't race on the cache dir; the loser skips silently.
+- Only the directory matching the currently installed version is removed — never the cache root.
+- All failure modes (missing dirs, timeout, divergent history, permission denied) are captured into `SyncError` and surface to the user via the notice; the hook never aborts.
+
 ## [0.4.6] - 2026-05-10
 
 ### Added
