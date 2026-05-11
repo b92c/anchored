@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -221,32 +220,13 @@ func applyPluginAutoUpdate(d PluginDrift) PluginDrift {
 	return d
 }
 
-// tryAcquireSyncLock attempts a non-blocking exclusive flock on
-// ~/.anchored/plugin_sync.lock. Returns (releaseFn, true) on success and
-// (nop, false) when the lock is already held by another anchored process.
-// Best-effort: when the home dir is unwritable or flock is unsupported
-// (Windows), the lock is treated as held to avoid clobbering.
-func tryAcquireSyncLock() (release func(), ok bool) {
-	path := syncLockPath()
-	if path == "" {
-		return func() {}, false
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return func() {}, false
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
-		return func() {}, false
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
-		return func() {}, false
-	}
-	return func() {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		f.Close()
-	}, true
-}
+// tryAcquireSyncLock is OS-specific:
+//   - plugin_sync_unix.go uses syscall.Flock (Linux + macOS + BSD)
+//   - plugin_sync_windows.go is a permissive noop
+//
+// Both honor the same contract: return (releaseFn, true) when the caller
+// holds an exclusive lock on ~/.anchored/plugin_sync.lock; (nop, false)
+// when someone else is mutating the plugin cache.
 
 func gitFastForward(dir string) error {
 	if dir == "" {

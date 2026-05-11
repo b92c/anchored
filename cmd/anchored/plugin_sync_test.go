@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -253,8 +254,12 @@ func TestGitFastForward_RejectsNonRepo(t *testing.T) {
 
 // TestTryAcquireSyncLock_Mutex confirms a second acquire on the same
 // file fails fast (LOCK_NB returns EWOULDBLOCK). Critical for the
-// "two Claude Code windows opening at once" race scenario.
+// "two Claude Code windows opening at once" race scenario. Skipped on
+// Windows where the implementation is intentionally a permissive noop.
 func TestTryAcquireSyncLock_Mutex(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("flock is unix-only; Windows lock is a permissive noop")
+	}
 	// Redirect HOME so the test's lock file lives in a temp dir.
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)

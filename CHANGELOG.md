@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.8] - 2026-05-11
+
+### Fixed
+
+- **Windows cross-compile** — v0.4.7 release artifacts never published because
+  `syscall.Flock` and `syscall.LOCK_*` aren't defined on Windows, breaking the
+  GoReleaser Windows target. `tryAcquireSyncLock` is now split via build tags:
+  `plugin_sync_unix.go` keeps the real flock implementation (Linux + macOS +
+  BSD); `plugin_sync_windows.go` is a permissive noop with a comment
+  explaining why (the race we're guarding is rare on a single-user CLI tool
+  and the worst case is a redundant idempotent sync). `TestTryAcquireSyncLock_Mutex`
+  skips on Windows via `runtime.GOOS`.
+
 ## [0.4.7] - 2026-05-10
 
 ### Added
