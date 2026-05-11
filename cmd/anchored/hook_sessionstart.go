@@ -58,6 +58,33 @@ func runHookSessionStart(args []string) {
 
 	additional := mcp.AnchoredRoutingBlock
 
+	// Plugin drift check: when the installed plugin cache is older than the
+	// running binary, the user is missing hooks/skills from the new release.
+	// We always notify; if config.Plugin.AutoUpdate is on we also fast-
+	// forward the marketplace mirror + wipe the stale cache so Claude Code
+	// reinstalls on its next launch.
+	cfg, _ := loadConfig(*configPath)
+	if cfg != nil {
+		drift := detectPluginDrift(cfg, Version)
+		if drift.HasDrift {
+			if cfg.Plugin.AutoUpdate {
+				drift = applyPluginAutoUpdate(drift)
+			}
+			if notice := renderPluginUpdateNotice(drift); notice != "" {
+				additional += "\n\n" + notice
+			}
+			dlog.Event("hook.sessionstart", map[string]any{
+				"stage":           "plugin_drift",
+				"installed":       drift.InstalledVersion,
+				"binary":          drift.BinaryVersion,
+				"auto_synced":     drift.SyncPerformed,
+				"sync_error":      drift.SyncError,
+				"marketplace_dir": drift.MarketplaceDir,
+				"cache_dir":       drift.CacheDir,
+			})
+		}
+	}
+
 	dlog.Event("hook.sessionstart", map[string]any{
 		"stage":      "start",
 		"session_id": input.SessionID,

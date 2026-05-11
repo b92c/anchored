@@ -18,6 +18,26 @@ type Config struct {
 	Dream           DreamConfig           `yaml:"dream"`
 	ContextOptimizer ContextOptimizerConfig `yaml:"context_optimizer"`
 	Debug           DebugConfig           `yaml:"debug"`
+	Plugin          PluginConfig          `yaml:"plugin"`
+}
+
+// PluginConfig controls how anchored handles drift between the binary version
+// and the Claude Code plugin cache. Detection (notification in SessionStart)
+// is always on; AutoUpdate flips on the opt-in side effect of fast-forwarding
+// the marketplace git mirror and removing the stale cache entry, which lets
+// Claude Code re-fetch the plugin on its next launch.
+type PluginConfig struct {
+	// AutoUpdate=true makes the SessionStart hook fast-forward the
+	// marketplace git clone and delete the old cache dir when a newer
+	// release is detected. User still has to restart Claude Code, but
+	// no /plugin commands are needed.
+	AutoUpdate bool `yaml:"auto_update"`
+	// MarketplaceDir overrides where the Claude Code marketplace mirror
+	// lives. Defaults to ~/.claude/plugins/marketplaces/anchored.
+	MarketplaceDir string `yaml:"marketplace_dir"`
+	// CacheDir overrides where Claude Code keeps the installed-plugin cache.
+	// Defaults to ~/.claude/plugins/cache/anchored/anchored.
+	CacheDir string `yaml:"cache_dir"`
 }
 
 // DebugConfig controls anchored's optional NDJSON event log.
@@ -124,6 +144,14 @@ func Defaults() *Config {
 			Enabled: false,
 			Path:    "~/.anchored/debug.log",
 		},
+		Plugin: PluginConfig{
+			// Default true — same policy as the binary auto-updater.
+			// Drift between binary version and installed plugin cache
+			// would otherwise silently leave the user without hooks.
+			AutoUpdate:     true,
+			MarketplaceDir: "~/.claude/plugins/marketplaces/anchored",
+			CacheDir:       "~/.claude/plugins/cache/anchored/anchored",
+		},
 	}
 }
 
@@ -155,6 +183,8 @@ func expandPaths(cfg *Config) *Config {
 	cfg.Memory.StorageDir = expandHome(cfg.Memory.StorageDir, home)
 	cfg.Memory.DatabasePath = expandHome(cfg.Memory.DatabasePath, home)
 	cfg.Embedding.ModelDir = expandHome(cfg.Embedding.ModelDir, home)
+	cfg.Plugin.MarketplaceDir = expandHome(cfg.Plugin.MarketplaceDir, home)
+	cfg.Plugin.CacheDir = expandHome(cfg.Plugin.CacheDir, home)
 
 	return cfg
 }
