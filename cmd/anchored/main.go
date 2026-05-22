@@ -71,7 +71,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  anchored update <id>        Update a memory\n")
 	fmt.Fprintf(os.Stderr, "  anchored stats              Show memory statistics\n")
 	fmt.Fprintf(os.Stderr, "  anchored identity [edit]    View or edit identity file\n")
-	fmt.Fprintf(os.Stderr, "  anchored config [show|set]  View or modify configuration\n")
+	fmt.Fprintf(os.Stderr, "  anchored config [show|set|wizard] View or modify configuration\n")
 	fmt.Fprintf(os.Stderr, "  anchored init [--tool]     Initialize and register MCP server\n")
 	fmt.Fprintf(os.Stderr, "  anchored precompact         Pre-compact memory context\n")
 	fmt.Fprintf(os.Stderr, "  anchored hook <subcommand>  Run session continuity hooks\n")
