@@ -19,6 +19,18 @@ type Config struct {
 	ContextOptimizer ContextOptimizerConfig `yaml:"context_optimizer"`
 	Debug           DebugConfig           `yaml:"debug"`
 	Plugin          PluginConfig          `yaml:"plugin"`
+	Remote          RemoteConfig          `yaml:"remote"`
+}
+
+// RemoteConfig controls the remote sync endpoint for team-shared memories.
+// All fields default to zero/off — no network calls happen unless explicitly
+// configured. The preview command is offline-only and uses the filter pipeline
+// without contacting any server.
+type RemoteConfig struct {
+	Enabled   bool     `yaml:"enabled"`
+	ServerURL string   `yaml:"server_url"`
+	APIKey    string   `yaml:"api_key"`
+	Projects  []string `yaml:"projects"`
 }
 
 // PluginConfig controls how anchored handles drift between the binary version
