@@ -40,7 +40,7 @@ func NewService(cfg *config.Config, logger *slog.Logger) (*Service, error) {
 
 	projDet := project.NewDetector(store.DB())
 
-	sanitizer := NewSanitizer(cfg.Sanitizer.Enabled)
+	sanitizer := NewSanitizer(cfg.Sanitizer)
 
 	svc := &Service{
 		store:     store,

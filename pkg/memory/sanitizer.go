@@ -1,8 +1,11 @@
 package memory
 
 import (
+	"fmt"
 	"log/slog"
 	"regexp"
+
+	"github.com/jholhewres/anchored/pkg/config"
 )
 
 // redactionRule holds a regex and its replacement template. Use $1, $2 etc. to preserve captured groups.
@@ -16,9 +19,9 @@ type Sanitizer struct {
 	logger *slog.Logger
 }
 
-func NewSanitizer(enabled bool) *Sanitizer {
+func NewSanitizer(cfg config.SanitizerConfig) *Sanitizer {
 	return &Sanitizer{
-		rules:  defaultRules(enabled),
+		rules:  buildRules(cfg),
 		logger: slog.Default(),
 	}
 }
@@ -42,8 +45,8 @@ func (s *Sanitizer) Sanitize(text string) string {
 	return text
 }
 
-func defaultRules(enabled bool) []redactionRule {
-	if !enabled {
+func buildRules(cfg config.SanitizerConfig) []redactionRule {
+	if !cfg.Enabled {
 		return nil
 	}
 
@@ -110,12 +113,22 @@ func defaultRules(enabled bool) []redactionRule {
 		},
 	}
 
-	rules := make([]redactionRule, 0, len(defs))
+	rules := make([]redactionRule, 0, len(defs)+len(cfg.Patterns))
 	for _, d := range defs {
 		re, err := regexp.Compile(d.pattern)
 		if err == nil {
 			rules = append(rules, redactionRule{pattern: re, replacement: d.replacement})
 		}
 	}
+
+	for _, p := range cfg.Patterns {
+		re, err := regexp.Compile(p)
+		if err != nil {
+			slog.Warn("sanitizer: skipping invalid custom pattern", "pattern", p, "error", fmt.Errorf("compile: %w", err))
+			continue
+		}
+		rules = append(rules, redactionRule{pattern: re, replacement: "[REDACTED]"})
+	}
+
 	return rules
 }
