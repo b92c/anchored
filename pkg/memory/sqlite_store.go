@@ -114,8 +114,8 @@ func (s *SQLiteStore) Save(ctx context.Context, m Memory) error {
 	}
 
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO memories (id, project_id, category, content, content_hash, keywords, embedding, source, source_id, created_at, updated_at, access_count, last_accessed_at, metadata)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO memories (id, project_id, category, content, content_hash, keywords, embedding, source, source_id, created_at, updated_at, access_count, last_accessed_at, metadata, sync_dirty, sync_origin, author, remote_project_key)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 			project_id = excluded.project_id,
 			category = excluded.category,
@@ -127,9 +127,14 @@ func (s *SQLiteStore) Save(ctx context.Context, m Memory) error {
 			source_id = excluded.source_id,
 			updated_at = excluded.updated_at,
 			metadata = excluded.metadata,
+			sync_dirty = excluded.sync_dirty,
+			sync_origin = excluded.sync_origin,
+			author = excluded.author,
+			remote_project_key = excluded.remote_project_key,
 			deleted_at = NULL`,
 		m.ID, m.ProjectID, m.Category, m.Content, m.ContentHash, keywordsJSON, embeddingBlob, m.Source, m.SourceID,
 		m.CreatedAt, m.UpdatedAt, m.AccessCount, m.LastAccessed, metadataJSON,
+		m.SyncDirty, m.SyncOrigin, m.Author, m.RemoteProjectKey,
 	)
 	if err != nil {
 		return fmt.Errorf("save memory: %w", err)
@@ -146,7 +151,7 @@ func (s *SQLiteStore) Save(ctx context.Context, m Memory) error {
 
 func (s *SQLiteStore) Get(ctx context.Context, id string) (*Memory, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, project_id, category, content, content_hash, keywords, embedding, source, source_id, created_at, updated_at, access_count, last_accessed_at, metadata
+		`SELECT id, project_id, category, content, content_hash, keywords, embedding, source, source_id, created_at, updated_at, access_count, last_accessed_at, metadata, sync_dirty, sync_origin, author, remote_project_key
 		 FROM memories WHERE id = ? AND deleted_at IS NULL`, id,
 	)
 
@@ -241,11 +246,34 @@ func (s *SQLiteStore) Delete(ctx context.Context, id string) error {
 
 func (s *SQLiteStore) List(ctx context.Context, opts ListOptions) ([]Memory, error) {
 	qb := strings.Builder{}
-	qb.WriteString(`SELECT id, project_id, category, content, content_hash, keywords, embedding, source, source_id, created_at, updated_at, access_count, last_accessed_at, metadata FROM memories`)
+	qb.WriteString(`SELECT id, project_id, category, content, content_hash, keywords, embedding, source, source_id, created_at, updated_at, access_count, last_accessed_at, metadata, sync_dirty, sync_origin, author, remote_project_key FROM memories`)
 	var args []any
 	var conditions []string
 
-	conditions = append(conditions, "deleted_at IS NULL")
+	if !opts.IncludeDeleted {
+		conditions = append(conditions, "deleted_at IS NULL")
+	}
+
+	switch {
+	case len(opts.Categories) > 0:
+		marks := make([]string, len(opts.Categories))
+		for i, c := range opts.Categories {
+			marks[i] = "?"
+			args = append(args, c)
+		}
+		conditions = append(conditions, "category IN ("+strings.Join(marks, ",")+")")
+	case opts.Category != "":
+		conditions = append(conditions, "category = ?")
+		args = append(args, opts.Category)
+	}
+	if opts.ProjectID != "" {
+		conditions = append(conditions, "project_id = ?")
+		args = append(args, opts.ProjectID)
+	}
+	if opts.Source != "" {
+		conditions = append(conditions, "source = ?")
+		args = append(args, opts.Source)
+	}
 
 	switch {
 	case len(opts.Categories) > 0:
@@ -264,6 +292,10 @@ func (s *SQLiteStore) List(ctx context.Context, opts ListOptions) ([]Memory, err
 	if opts.ProjectID != "" {
 		conditions = append(conditions, "project_id = ?")
 		args = append(args, opts.ProjectID)
+	}
+	if opts.Source != "" {
+		conditions = append(conditions, "source = ?")
+		args = append(args, opts.Source)
 	}
 
 	if len(conditions) > 0 {
@@ -410,10 +442,12 @@ func scanMemory(row *sql.Row) (*Memory, error) {
 	var lastAccessed sql.NullTime
 	var embeddingBlob []byte
 	var contentHash sql.NullString
+	var syncOrigin, author, remoteProjectKey sql.NullString
 
 	err := row.Scan(
 		&m.ID, &projectID, &m.Category, &m.Content, &contentHash, &keywordsStr, &embeddingBlob, &m.Source, &sourceID,
 		&m.CreatedAt, &m.UpdatedAt, &m.AccessCount, &lastAccessed, &metadataStr,
+		&m.SyncDirty, &syncOrigin, &author, &remoteProjectKey,
 	)
 	if err != nil {
 		return nil, err
@@ -424,6 +458,9 @@ func scanMemory(row *sql.Row) (*Memory, error) {
 	m.ContentHash = contentHash.String
 	m.Keywords = unmarshalKeywords(keywordsStr)
 	m.LastAccessed = nilTimeIfZero(lastAccessed)
+	m.SyncOrigin = syncOrigin.String
+	m.Author = nilIfNull(author)
+	m.RemoteProjectKey = nilIfNull(remoteProjectKey)
 	if metadataStr.Valid {
 		json.Unmarshal([]byte(metadataStr.String), &m.Metadata)
 	}
@@ -441,10 +478,12 @@ func scanMemoryRow(rows *sql.Rows) (*Memory, error) {
 	var lastAccessed sql.NullTime
 	var embeddingBlob []byte
 	var contentHash sql.NullString
+	var syncOrigin, author, remoteProjectKey sql.NullString
 
 	err := rows.Scan(
 		&m.ID, &projectID, &m.Category, &m.Content, &contentHash, &keywordsStr, &embeddingBlob, &m.Source, &sourceID,
 		&m.CreatedAt, &m.UpdatedAt, &m.AccessCount, &lastAccessed, &metadataStr,
+		&m.SyncDirty, &syncOrigin, &author, &remoteProjectKey,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan memory row: %w", err)
@@ -455,6 +494,9 @@ func scanMemoryRow(rows *sql.Rows) (*Memory, error) {
 	m.ContentHash = contentHash.String
 	m.Keywords = unmarshalKeywords(keywordsStr)
 	m.LastAccessed = nilTimeIfZero(lastAccessed)
+	m.SyncOrigin = syncOrigin.String
+	m.Author = nilIfNull(author)
+	m.RemoteProjectKey = nilIfNull(remoteProjectKey)
 	if metadataStr.Valid {
 		json.Unmarshal([]byte(metadataStr.String), &m.Metadata)
 	}
@@ -495,7 +537,7 @@ func (s *SQLiteStore) CountWithoutEmbedding(ctx context.Context) (int, error) {
 }
 
 func (s *SQLiteStore) ListWithoutEmbedding(ctx context.Context, limit int) ([]Memory, error) {
-	q := `SELECT id, project_id, category, content, content_hash, keywords, embedding, source, source_id, created_at, updated_at, access_count, last_accessed_at, metadata FROM memories WHERE (embedding IS NULL OR LENGTH(embedding) = 0) AND deleted_at IS NULL ORDER BY created_at ASC`
+	q := `SELECT id, project_id, category, content, content_hash, keywords, embedding, source, source_id, created_at, updated_at, access_count, last_accessed_at, metadata, sync_dirty, sync_origin, author, remote_project_key FROM memories WHERE (embedding IS NULL OR LENGTH(embedding) = 0) AND deleted_at IS NULL ORDER BY created_at ASC`
 	if limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", limit)
 	}
@@ -588,13 +630,13 @@ func (s *SQLiteStore) FindByContentHash(ctx context.Context, hash string, projec
 	var row *sql.Row
 	if projectID != nil {
 		row = s.db.QueryRowContext(ctx,
-			`SELECT id, project_id, category, content, content_hash, keywords, embedding, source, source_id, created_at, updated_at, access_count, last_accessed_at, metadata
+			`SELECT id, project_id, category, content, content_hash, keywords, embedding, source, source_id, created_at, updated_at, access_count, last_accessed_at, metadata, sync_dirty, sync_origin, author, remote_project_key
 			 FROM memories WHERE content_hash = ? AND project_id = ? AND deleted_at IS NULL`,
 			hash, *projectID,
 		)
 	} else {
 		row = s.db.QueryRowContext(ctx,
-			`SELECT id, project_id, category, content, content_hash, keywords, embedding, source, source_id, created_at, updated_at, access_count, last_accessed_at, metadata
+			`SELECT id, project_id, category, content, content_hash, keywords, embedding, source, source_id, created_at, updated_at, access_count, last_accessed_at, metadata, sync_dirty, sync_origin, author, remote_project_key
 			 FROM memories WHERE content_hash = ? AND project_id IS NULL AND deleted_at IS NULL`,
 			hash,
 		)

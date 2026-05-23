@@ -7,21 +7,25 @@ import (
 )
 
 type Memory struct {
-	ID           string     `json:"id"`
-	ProjectID    *string    `json:"project_id,omitempty"`
-	Category     string     `json:"category"`
-	Content      string     `json:"content"`
-	ContentHash  string     `json:"content_hash,omitempty"`
-	Keywords     []string   `json:"keywords,omitempty"`
-	Embedding    []float32  `json:"embedding,omitempty"`
-	Source       string     `json:"source"`
-	SourceID     *string    `json:"source_id,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
-	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
-	AccessCount  int        `json:"access_count"`
-	LastAccessed *time.Time `json:"last_accessed,omitempty"`
-	Metadata     any        `json:"metadata,omitempty"`
+	ID                string     `json:"id"`
+	ProjectID         *string    `json:"project_id,omitempty"`
+	Category          string     `json:"category"`
+	Content           string     `json:"content"`
+	ContentHash       string     `json:"content_hash,omitempty"`
+	Keywords          []string   `json:"keywords,omitempty"`
+	Embedding         []float32  `json:"embedding,omitempty"`
+	Source            string     `json:"source"`
+	SourceID          *string    `json:"source_id,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+	DeletedAt         *time.Time `json:"deleted_at,omitempty"`
+	AccessCount       int        `json:"access_count"`
+	LastAccessed      *time.Time `json:"last_accessed,omitempty"`
+	Metadata          any        `json:"metadata,omitempty"`
+	SyncDirty         bool       `json:"sync_dirty,omitempty"`
+	SyncOrigin        string     `json:"sync_origin,omitempty"`
+	Author            *string    `json:"author,omitempty"`
+	RemoteProjectKey  *string    `json:"remote_project_key,omitempty"`
 }
 
 type SearchResult struct {
@@ -44,8 +48,10 @@ type ListOptions struct {
 	// Categories lets callers filter on multiple categories with one query.
 	// When non-empty, takes precedence over Category. Use it for L0 context
 	// builders that want decision/learning/plan/preference/fact in one shot.
-	Categories []string
-	ProjectID  string
+	Categories     []string
+	ProjectID      string
+	Source         string
+	IncludeDeleted bool
 }
 
 type StoreStats struct {
@@ -90,4 +96,10 @@ type Store interface {
 	DB() *sql.DB
 	VectorCache() *VectorCache
 	Close() error
+}
+
+type MemoryObserver interface {
+	OnMemorySaved(ctx context.Context, m Memory)
+	OnMemoryUpdated(ctx context.Context, m Memory)
+	OnMemoryDeleted(ctx context.Context, id string, projectID *string)
 }

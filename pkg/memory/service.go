@@ -26,6 +26,7 @@ type Service struct {
 	kgExtractor *kg.PatternExtractor
 	shutdown    chan struct{}
 	wg          sync.WaitGroup
+	observers   []MemoryObserver
 }
 
 func NewService(cfg *config.Config, logger *slog.Logger) (*Service, error) {
@@ -133,6 +134,9 @@ func (s *Service) SaveWithOptions(ctx context.Context, opts SaveOptions) (*Memor
 		if err := s.store.Save(ctx, upd); err != nil {
 			return nil, fmt.Errorf("save: %w", err)
 		}
+		s.notifyObservers(func(obs MemoryObserver) {
+			obs.OnMemoryUpdated(ctx, upd)
+		})
 		return &upd, nil
 	}
 
@@ -167,6 +171,10 @@ func (s *Service) SaveWithOptions(ctx context.Context, opts SaveOptions) (*Memor
 		}(m.Content, m.ProjectID)
 	}
 
+	s.notifyObservers(func(obs MemoryObserver) {
+		obs.OnMemorySaved(ctx, m)
+	})
+
 	return &m, nil
 }
 
@@ -192,7 +200,19 @@ func (s *Service) List(ctx context.Context, opts ListOptions) ([]Memory, error) 
 }
 
 func (s *Service) Forget(ctx context.Context, id string) error {
-	return s.store.Delete(ctx, id)
+	m, _ := s.store.Get(ctx, id)
+	var pid *string
+	if m != nil {
+		pid = m.ProjectID
+	}
+	err := s.store.Delete(ctx, id)
+	if err != nil {
+		return err
+	}
+	s.notifyObservers(func(obs MemoryObserver) {
+		obs.OnMemoryDeleted(ctx, id, pid)
+	})
+	return nil
 }
 
 func (s *Service) Update(ctx context.Context, id, content, category string) (*Memory, error) {
@@ -231,13 +251,29 @@ func (s *Service) Update(ctx context.Context, id, content, category string) (*Me
 		s.embedAsync(id, content)
 	}
 
+	s.notifyObservers(func(obs MemoryObserver) {
+		obs.OnMemoryUpdated(ctx, Memory{ID: id, Content: updateContent, Category: updateCategory, ProjectID: m.ProjectID})
+	})
+
 	m.Content = updateContent
 	m.Category = updateCategory
 	return m, nil
 }
 
 func (s *Service) SoftForget(ctx context.Context, id string) error {
-	return s.store.SoftDelete(ctx, id)
+	m, _ := s.store.Get(ctx, id)
+	var pid *string
+	if m != nil {
+		pid = m.ProjectID
+	}
+	err := s.store.SoftDelete(ctx, id)
+	if err != nil {
+		return err
+	}
+	s.notifyObservers(func(obs MemoryObserver) {
+		obs.OnMemoryDeleted(ctx, id, pid)
+	})
+	return nil
 }
 
 func (s *Service) ForgetByScope(ctx context.Context, projectID, category, source string, hard bool) (int, error) {
@@ -343,6 +379,23 @@ func (s *Service) embedAsync(id, content string) {
 
 func (s *Service) SetKGExtractor(extractor *kg.PatternExtractor) {
 	s.kgExtractor = extractor
+}
+
+func (s *Service) RegisterObserver(obs MemoryObserver) {
+	s.observers = append(s.observers, obs)
+}
+
+func (s *Service) notifyObservers(fn func(obs MemoryObserver)) {
+	for _, obs := range s.observers {
+		go func(o MemoryObserver) {
+			defer func() {
+				if r := recover(); r != nil {
+					s.logger.Debug("observer panic recovered", "error", r)
+				}
+			}()
+			fn(o)
+		}(obs)
+	}
 }
 
 func (s *Service) BackfillEmbeddings(ctx context.Context, batchSize int) (int, error) {

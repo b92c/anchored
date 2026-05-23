@@ -81,6 +81,19 @@ func Migrate(db *sql.DB) error {
 			ALTER TABLE projects ADD COLUMN remote_key TEXT;
 			CREATE INDEX IF NOT EXISTS idx_projects_remote_key ON projects(remote_key);
 		`},
+		{Name: "011_sync_metadata", Up: `
+			ALTER TABLE memories ADD COLUMN sync_dirty BOOLEAN DEFAULT FALSE;
+			ALTER TABLE memories ADD COLUMN sync_origin TEXT DEFAULT 'local';
+			ALTER TABLE memories ADD COLUMN author TEXT;
+			ALTER TABLE memories ADD COLUMN remote_project_key TEXT;
+			CREATE TABLE IF NOT EXISTS sync_state (
+				project_id TEXT PRIMARY KEY,
+				remote_project_key TEXT,
+				watermark TEXT,
+				last_sync DATETIME,
+				client_id TEXT NOT NULL
+			);
+		`},
 	}
 
 	for _, m := range migrations {
