@@ -77,6 +77,10 @@ func Migrate(db *sql.DB) error {
 		`},
 		{Name: "008_content_optimizer", Up: ctxpkg.MigrationSQL},
 		{Name: "009_content_project_id", Up: ctxpkg.MigrationSQL009},
+		{Name: "010_project_remote_key", Up: `
+			ALTER TABLE projects ADD COLUMN remote_key TEXT;
+			CREATE INDEX IF NOT EXISTS idx_projects_remote_key ON projects(remote_key);
+		`},
 	}
 
 	for _, m := range migrations {
