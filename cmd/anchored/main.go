@@ -49,6 +49,12 @@ func main() {
 		runDoctor(os.Args[2:])
 	case "purge":
 		runPurge(os.Args[2:])
+	case "inspect":
+		runInspect(os.Args[2:])
+	case "export":
+		runExport(os.Args[2:])
+	case "remote":
+		runRemote(os.Args[2:])
 	case "--version", "-v":
 		fmt.Printf("anchored %s\n", Version)
 	case "--help", "-h":
@@ -78,6 +84,10 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  anchored dream              Analyze and consolidate duplicate memories\n")
 	fmt.Fprintf(os.Stderr, "  anchored doctor             Diagnose installation, config, MCP registration\n")
 	fmt.Fprintf(os.Stderr, "  anchored purge              Wipe memories (--hard for full DB reset)\n")
+	fmt.Fprintf(os.Stderr, "  anchored inspect <id>      Show full memory details\n")
+	fmt.Fprintf(os.Stderr, "  anchored export             Export memories (JSON/JSONL)\n")
+	fmt.Fprintf(os.Stderr, "  anchored remote status      Show remote sync config status\n")
+	fmt.Fprintf(os.Stderr, "  anchored remote preview     Preview which memories would sync (offline)\n")
 	fmt.Fprintf(os.Stderr, "  anchored --version          Print version\n")
 	fmt.Fprintf(os.Stderr, "\nImport sources: claude-code devclaw opencode cursor all\n")
 	fmt.Fprintf(os.Stderr, "\nFlags:\n")
